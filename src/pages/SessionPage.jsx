@@ -255,14 +255,27 @@ export default function SessionPage() {
   const totals = calcSessionTotals(session, groups, extras)
   const notYetIn = players.filter((p) => !groupByPayer.has(p.id))
 
-  // Roster picker: groups with 2+ active members render as a labelled cluster
-  // of individual toggles; everyone else is a plain chip.
-  const rosterGroups = playerGroups
-    .map((pg) => ({ pg, members: players.filter((p) => p.group_id === pg.id) }))
-    .filter((s) => s.members.length >= 2)
-    .sort((a, b) => a.pg.name.localeCompare(b.pg.name))
-  const groupedPlayerIds = new Set(rosterGroups.flatMap((s) => s.members.map((m) => m.id)))
-  const soloPlayers = players.filter((p) => !groupedPlayerIds.has(p.id))
+  // Roster picker: one flat wrap of per-player chips. Members of the same group
+  // (2+ playing) sit adjacent inside a tinted pair so they read as one unit,
+  // but each person is still toggled individually.
+  const pairable = new Map()
+  playerGroups.forEach((pg) => {
+    const mem = players.filter((p) => p.group_id === pg.id)
+    if (mem.length >= 2) pairable.set(pg.id, { name: pg.name, members: mem })
+  })
+  const rosterUnits = []
+  const placed = new Set()
+  for (const p of players) {
+    if (placed.has(p.id)) continue
+    const pair = p.group_id ? pairable.get(p.group_id) : null
+    if (pair) {
+      pair.members.forEach((m) => placed.add(m.id))
+      rosterUnits.push({ type: 'pair', key: p.group_id, ...pair })
+    } else {
+      placed.add(p.id)
+      rosterUnits.push({ type: 'solo', key: p.id, player: p })
+    }
+  }
 
   const targetName = (gid) => groups.find((g) => g.id === gid)?.players?.name || 'Unknown'
 
@@ -433,55 +446,30 @@ export default function SessionPage() {
           <div className="empty-state">No active players. Add some on the Players tab.</div>
         ) : (
           <div className="roster-picker">
-            {rosterGroups.map(({ pg, members: mem }) => {
-              const missing = mem.filter((m) => !groupByPayer.has(m.id))
-              const present = mem.filter((m) => groupByPayer.has(m.id))
-              return (
-                <div className="roster-cluster" key={pg.id}>
-                  <div className="roster-cluster-head">
-                    <span className="roster-cluster-name">{pg.name}</span>
-                    <span className="muted">{present.length} of {mem.length} in</span>
-                    {missing.length > 0 && (
-                      <button type="button" className="link-btn" onClick={() => addPayers(missing)}>
-                        Add {missing.length === mem.length ? 'all' : 'rest'}
-                      </button>
-                    )}
-                    {present.length > 0 && (
-                      <button
-                        type="button"
-                        className="link-btn"
-                        onClick={() => removeGroupRows(present.map((m) => groupByPayer.get(m.id).id))}
-                      >
-                        Clear
-                      </button>
-                    )}
-                  </div>
-                  <div className="roster-cluster-body">
-                    {mem.map((m) => (
+            {rosterUnits.map((u) =>
+              u.type === 'solo' ? (
+                <PlayerChip
+                  key={u.key}
+                  name={u.player.name}
+                  status={u.player.status}
+                  on={groupByPayer.has(u.player.id)}
+                  onClick={() => togglePlayer(u.player)}
+                />
+              ) : (
+                <div className="roster-pair" key={u.key} title={u.name}>
+                  {u.members.map((m, i) => (
+                    <Fragment key={m.id}>
+                      {i > 0 && <span className="pair-link" aria-hidden="true">⁃</span>}
                       <PlayerChip
-                        key={m.id}
                         name={m.name}
                         status={m.status}
                         on={groupByPayer.has(m.id)}
                         onClick={() => togglePlayer(m)}
                       />
-                    ))}
-                  </div>
+                    </Fragment>
+                  ))}
                 </div>
               )
-            })}
-            {soloPlayers.length > 0 && (
-              <div className="roster-cluster-body">
-                {soloPlayers.map((p) => (
-                  <PlayerChip
-                    key={p.id}
-                    name={p.name}
-                    status={p.status}
-                    on={groupByPayer.has(p.id)}
-                    onClick={() => togglePlayer(p)}
-                  />
-                ))}
-              </div>
             )}
           </div>
         )}
