@@ -4,9 +4,14 @@ Auto-calculates court fees, shuttle costs, and guest markup ("funds") for weekly
 
 ## How the math works
 
-- Every session has a **court fee per slot**, **shuttle cost per person**, and a **guest fixed rate** (defaults: 175 / 93.33 / 300 — editable per session).
 - A **payment group** = one payer covering a headcount of people (themselves + anyone they bring), plus optional water/penalty.
-- `actual_cost = (court_fee_per_slot + shuttle_unit_cost) × headcount + water_cost`
+- `players` = the sum of every payment group's headcount in that session.
+- **Shuttle cost per person** is auto-calculated: enter the number of **shuttles used** and the **price per shuttle**; the app computes `shuttle_count × shuttle_price_each ÷ players`.
+- **Court fee** has two modes, picked per session:
+  - *Fixed amount per person* → `court_fee_per_slot`
+  - *Total court fee ÷ all players* → `court_fee_total ÷ players`
+- Both per-person rates update live on the session screen as you add payment groups.
+- `actual_cost = (court_unit_cost + shuttle_unit_cost) × headcount + water_cost`
 - If the payer is a **Regular** → they pay `actual_cost`. No funds generated, even if they're covering guests.
 - If the payer is a **Guest** → they pay `guest_fixed_rate × headcount`. Funds = `(guest_fixed_rate × headcount) − actual_cost`.
 

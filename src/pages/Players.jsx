@@ -73,37 +73,41 @@ export default function Players() {
         ) : players.length === 0 ? (
           <div className="empty-state">No players yet — add your first one above.</div>
         ) : (
-          <table className="ledger">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Status</th>
-                <th>Active</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {players.map((p) => (
-                <tr key={p.id} className={p.status === 'guest' ? 'row-guest' : ''}>
-                  <td>{p.name}</td>
-                  <td>
-                    <span className={`badge ${p.status === 'regular' ? 'badge-regular' : 'badge-guest'}`}>
-                      {p.status === 'regular' ? 'Regular' : 'Guest'}
-                    </span>
-                  </td>
-                  <td>{p.active ? 'Yes' : 'No'}</td>
-                  <td style={{ display: 'flex', gap: 12 }}>
-                    <button className="danger-link" onClick={() => toggleStatus(p)}>
-                      Switch to {p.status === 'regular' ? 'Guest' : 'Regular'}
-                    </button>
-                    <button className="danger-link" onClick={() => toggleActive(p)}>
-                      {p.active ? 'Deactivate' : 'Reactivate'}
-                    </button>
-                  </td>
+          <div className="table-wrap">
+            <table className="ledger">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Status</th>
+                  <th>Active</th>
+                  <th></th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {players.map((p) => (
+                  <tr key={p.id} className={p.status === 'guest' ? 'row-guest' : ''}>
+                    <td>{p.name}</td>
+                    <td>
+                      <span className={`badge ${p.status === 'regular' ? 'badge-regular' : 'badge-guest'}`}>
+                        {p.status === 'regular' ? 'Regular' : 'Guest'}
+                      </span>
+                    </td>
+                    <td>{p.active ? 'Yes' : 'No'}</td>
+                    <td>
+                      <div className="row-actions">
+                        <button className="danger-link" onClick={() => toggleStatus(p)}>
+                          Switch to {p.status === 'regular' ? 'Guest' : 'Regular'}
+                        </button>
+                        <button className="danger-link" onClick={() => toggleActive(p)}>
+                          {p.active ? 'Deactivate' : 'Reactivate'}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>
