@@ -16,7 +16,7 @@ export default function Login() {
 
   return (
     <div className="app-shell" style={{ maxWidth: 380, paddingTop: 80 }}>
-      <h1 style={{ marginBottom: 6 }}>Shuttle Ledger</h1>
+      <h1 style={{ marginBottom: 6 }}>Court Split</h1>
       <p style={{ color: 'var(--ink-soft)', marginBottom: 24 }}>
         Sign in to manage sessions and payments.
       </p>

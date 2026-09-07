@@ -1,4 +1,4 @@
-# Shuttle Ledger
+# Court Split
 
 Auto-calculates court fees, shuttle costs, and guest markup ("funds") for weekly badminton sessions. Regulars pay actual cost (even for guests they personally bring); guests pay a fixed rate, and the difference becomes profit ("funds").
 
@@ -23,7 +23,7 @@ Status lives on the **player** (Players tab) and is snapshotted onto each paymen
    - **Publishable key** (`sb_publishable_...`, under the API Keys tab — click "Create new API keys" if you don't see one yet) → this is `VITE_SUPABASE_PUBLISHABLE_KEY`
 
    Note: Supabase is phasing out the older `anon` key in favor of publishable keys — same low privileges, same RLS behavior, just a new format. Use the publishable key from the start so you don't need to migrate later.
-4. Go to **Authentication → Providers** and make sure **Email** is enabled (it is by default). This app uses magic-link (passwordless) sign-in — no extra config needed, but under **Authentication → URL Configuration**, add your future GitHub Pages URL (see step 3 below) to **Redirect URLs**, e.g. `https://yourusername.github.io/badminton-payments/`.
+4. Go to **Authentication → Providers** and make sure **Email** is enabled (it is by default). This app uses magic-link (passwordless) sign-in — no extra config needed, but under **Authentication → URL Configuration**, add your future GitHub Pages URL (see step 3 below) to **Redirect URLs**, e.g. `https://yourusername.github.io/court-split/`.
 5. Add yourself (and any co-admin) as a user: **Authentication → Users → Add user**, or just sign in once from the app and it'll send you a magic link to that email.
 
 ## 2. Push this code to GitHub
@@ -34,11 +34,11 @@ git init
 git add .
 git commit -m "Initial commit"
 git branch -M main
-git remote add origin https://github.com/YOUR-USERNAME/badminton-payments.git
+git remote add origin https://github.com/YOUR-USERNAME/court-split.git
 git push -u origin main
 ```
 
-> If you name your repo something other than `badminton-payments`, update the `base` path in `vite.config.js` to match — it must be `/your-repo-name/`.
+> If you name your repo something other than `court-split`, update the `base` path in `vite.config.js` to match — it must be `/your-repo-name/`.
 
 ## 3. Add your Supabase keys as GitHub Secrets
 
@@ -53,7 +53,7 @@ In your GitHub repo: **Settings → Secrets and variables → Actions → New re
 
 **Settings → Pages → Build and deployment → Source → GitHub Actions.**
 
-That's it — the workflow in `.github/workflows/deploy.yml` runs automatically on every push to `main` and deploys to `https://YOUR-USERNAME.github.io/badminton-payments/`.
+That's it — the workflow in `.github/workflows/deploy.yml` runs automatically on every push to `main` and deploys to `https://YOUR-USERNAME.github.io/court-split/`.
 
 ## 5. Add players
 

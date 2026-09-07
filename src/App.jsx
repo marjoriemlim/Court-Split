@@ -29,7 +29,7 @@ export default function App() {
     <div className="app-shell">
       <header className="court-header">
         <div>
-          <h1>Shuttle Ledger</h1>
+          <h1>Court Split</h1>
           <div className="tagline">Court fees, sorted — every Friday.</div>
         </div>
         <button className="ghost" onClick={() => supabase.auth.signOut()}>
