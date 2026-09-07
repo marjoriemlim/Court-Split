@@ -18,9 +18,11 @@ Status lives on the **player** (Players tab) and is snapshotted onto each paymen
 
 1. Go to [supabase.com](https://supabase.com) → New project. Pick any name/region, set a database password.
 2. Once it's ready, open **SQL Editor** and paste in the full contents of `supabase/schema.sql` from this repo, then run it. This creates the `players`, `sessions`, and `payment_groups` tables plus a helper view.
-3. Go to **Project Settings → API**. Copy:
-   - **Project URL** → this is `VITE_SUPABASE_URL`
-   - **anon public key** → this is `VITE_SUPABASE_ANON_KEY`
+3. Go to **Project Settings → API Keys**. Copy:
+   - **Project URL** (from the Connect dialog or API settings) → this is `VITE_SUPABASE_URL`
+   - **Publishable key** (`sb_publishable_...`, under the API Keys tab — click "Create new API keys" if you don't see one yet) → this is `VITE_SUPABASE_PUBLISHABLE_KEY`
+
+   Note: Supabase is phasing out the older `anon` key in favor of publishable keys — same low privileges, same RLS behavior, just a new format. Use the publishable key from the start so you don't need to migrate later.
 4. Go to **Authentication → Providers** and make sure **Email** is enabled (it is by default). This app uses magic-link (passwordless) sign-in — no extra config needed, but under **Authentication → URL Configuration**, add your future GitHub Pages URL (see step 3 below) to **Redirect URLs**, e.g. `https://yourusername.github.io/badminton-payments/`.
 5. Add yourself (and any co-admin) as a user: **Authentication → Users → Add user**, or just sign in once from the app and it'll send you a magic link to that email.
 
@@ -43,7 +45,7 @@ git push -u origin main
 In your GitHub repo: **Settings → Secrets and variables → Actions → New repository secret**. Add two:
 
 - `VITE_SUPABASE_URL`
-- `VITE_SUPABASE_ANON_KEY`
+- `VITE_SUPABASE_PUBLISHABLE_KEY`
 
 (Use the values from Supabase step 1.3 above.)
 
