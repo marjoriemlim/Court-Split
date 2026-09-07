@@ -33,9 +33,9 @@ cd badminton-app
 git init
 git add .
 git commit -m "Initial commit"
-git branch -M main
+git branch -M master
 git remote add origin https://github.com/YOUR-USERNAME/court-split.git
-git push -u origin main
+git push -u origin master
 ```
 
 > If you name your repo something other than `court-split`, update the `base` path in `vite.config.js` to match — it must be `/your-repo-name/`.
@@ -53,7 +53,7 @@ In your GitHub repo: **Settings → Secrets and variables → Actions → New re
 
 **Settings → Pages → Build and deployment → Source → GitHub Actions.**
 
-That's it — the workflow in `.github/workflows/deploy.yml` runs automatically on every push to `main` and deploys to `https://YOUR-USERNAME.github.io/court-split/`.
+That's it — the workflow in `.github/workflows/deploy.yml` runs automatically on every push to `master` and deploys to `https://YOUR-USERNAME.github.io/court-split/`.
 
 ## 5. Add players
 
