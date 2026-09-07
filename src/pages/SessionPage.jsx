@@ -19,6 +19,16 @@ function StatusBadge({ status }) {
   )
 }
 
+function PlayerChip({ name, status, on, onClick }) {
+  return (
+    <button type="button" className={`roster-chip ${on ? 'on' : ''}`} aria-pressed={on} onClick={onClick}>
+      <span className="roster-check" aria-hidden="true">{on ? '✓' : '+'}</span>
+      <span className="roster-name">{name}</span>
+      <StatusBadge status={status} />
+    </button>
+  )
+}
+
 // Module-level so the <input> keeps focus while typing (a component defined
 // inside the page would be a new type every render and remount the input).
 function HeadcountCell({ row, setGroups, commit }) {
@@ -169,19 +179,6 @@ export default function SessionPage() {
     }
   }
 
-  // Toggle a whole group (couple/family) in or out at once.
-  async function toggleGroup(memberList) {
-    const present = memberList.filter((m) => groupByPayer.has(m.id))
-    if (present.length === memberList.length) {
-      const rows = present.map((m) => groupByPayer.get(m.id))
-      const risky = rows.some((g) => (Number(g.headcount) || 1) > 1 || g.members)
-      if (risky && !window.confirm('Remove this group from the session?')) return
-      removeGroupRows(rows.map((g) => g.id))
-    } else {
-      addPayers(memberList.filter((m) => !groupByPayer.has(m.id)))
-    }
-  }
-
   async function addAll() {
     await addPayers(players.filter((p) => !groupByPayer.has(p.id)))
   }
@@ -258,7 +255,8 @@ export default function SessionPage() {
   const totals = calcSessionTotals(session, groups, extras)
   const notYetIn = players.filter((p) => !groupByPayer.has(p.id))
 
-  // Roster picker sections: groups with 2+ active members render as one chip.
+  // Roster picker: groups with 2+ active members render as a labelled cluster
+  // of individual toggles; everyone else is a plain chip.
   const rosterGroups = playerGroups
     .map((pg) => ({ pg, members: players.filter((p) => p.group_id === pg.id) }))
     .filter((s) => s.members.length >= 2)
@@ -436,43 +434,55 @@ export default function SessionPage() {
         ) : (
           <div className="roster-picker">
             {rosterGroups.map(({ pg, members: mem }) => {
-              const onCount = mem.filter((m) => groupByPayer.has(m.id)).length
-              const state = onCount === 0 ? 'off' : onCount === mem.length ? 'on' : 'partial'
+              const missing = mem.filter((m) => !groupByPayer.has(m.id))
+              const present = mem.filter((m) => groupByPayer.has(m.id))
               return (
-                <button
-                  type="button"
-                  key={pg.id}
-                  className={`roster-chip roster-chip-group ${state === 'on' ? 'on' : ''} ${state === 'partial' ? 'partial' : ''}`}
-                  aria-pressed={state === 'on'}
-                  onClick={() => toggleGroup(mem)}
-                  title={mem.map((m) => m.name).join(', ')}
-                >
-                  <span className="roster-check" aria-hidden="true">
-                    {state === 'on' ? '✓' : state === 'partial' ? '–' : '+'}
-                  </span>
-                  <span className="roster-name">{pg.name}</span>
-                  <span className="badge badge-group">{onCount}/{mem.length}</span>
-                </button>
+                <div className="roster-cluster" key={pg.id}>
+                  <div className="roster-cluster-head">
+                    <span className="roster-cluster-name">{pg.name}</span>
+                    <span className="muted">{present.length} of {mem.length} in</span>
+                    {missing.length > 0 && (
+                      <button type="button" className="link-btn" onClick={() => addPayers(missing)}>
+                        Add {missing.length === mem.length ? 'all' : 'rest'}
+                      </button>
+                    )}
+                    {present.length > 0 && (
+                      <button
+                        type="button"
+                        className="link-btn"
+                        onClick={() => removeGroupRows(present.map((m) => groupByPayer.get(m.id).id))}
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                  <div className="roster-cluster-body">
+                    {mem.map((m) => (
+                      <PlayerChip
+                        key={m.id}
+                        name={m.name}
+                        status={m.status}
+                        on={groupByPayer.has(m.id)}
+                        onClick={() => togglePlayer(m)}
+                      />
+                    ))}
+                  </div>
+                </div>
               )
             })}
-            {soloPlayers.map((p) => {
-              const on = groupByPayer.has(p.id)
-              return (
-                <button
-                  type="button"
-                  key={p.id}
-                  className={`roster-chip ${on ? 'on' : ''}`}
-                  aria-pressed={on}
-                  onClick={() => togglePlayer(p)}
-                >
-                  <span className="roster-check" aria-hidden="true">{on ? '✓' : '+'}</span>
-                  <span className="roster-name">{p.name}</span>
-                  <span className={`badge ${p.status === 'regular' ? 'badge-regular' : 'badge-guest'}`}>
-                    {p.status === 'regular' ? 'Regular' : 'Guest'}
-                  </span>
-                </button>
-              )
-            })}
+            {soloPlayers.length > 0 && (
+              <div className="roster-cluster-body">
+                {soloPlayers.map((p) => (
+                  <PlayerChip
+                    key={p.id}
+                    name={p.name}
+                    status={p.status}
+                    on={groupByPayer.has(p.id)}
+                    onClick={() => togglePlayer(p)}
+                  />
+                ))}
+              </div>
+            )}
           </div>
         )}
 

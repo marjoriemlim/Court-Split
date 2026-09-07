@@ -117,6 +117,31 @@ nav.tabs a.active {
 /* Roster multi-select */
 .roster-picker {
   display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.roster-cluster {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.roster-cluster-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-bottom: 8px;
+}
+
+.roster-cluster-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.roster-cluster-body {
+  display: flex;
   flex-wrap: wrap;
   gap: 8px;
 }
@@ -157,24 +182,6 @@ nav.tabs a.active {
 .roster-chip.on .roster-check { background: rgba(255, 255, 255, 0.25); }
 .roster-chip.on .badge { opacity: 0.9; }
 .roster-name { font-weight: 500; }
-
-.roster-chip.partial {
-  border-style: dashed;
-  border-color: var(--court-green);
-  color: var(--court-green);
-}
-
-.roster-chip-group { border-color: var(--court-green); }
-.roster-chip-group .badge-group {
-  background: var(--line-white);
-  border: 1px solid var(--border);
-  color: var(--ink-soft);
-}
-.roster-chip-group.on .badge-group {
-  background: rgba(255, 255, 255, 0.25);
-  border-color: transparent;
-  color: #fff;
-}
 
 .covering {
   margin-top: 16px;
@@ -287,7 +294,6 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .badge-regular { background: #e2ede6; color: var(--court-green); }
 .badge-guest { background: var(--shuttle-gold); color: #4a3612; }
 .badge-mixed { background: #e7e2d3; color: #5a4b2a; }
-.badge-group { background: rgba(255, 255, 255, 0.25); color: inherit; }
 
 .sub-note { font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
 
