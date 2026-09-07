@@ -158,6 +158,24 @@ nav.tabs a.active {
 .roster-chip.on .badge { opacity: 0.9; }
 .roster-name { font-weight: 500; }
 
+.roster-chip.partial {
+  border-style: dashed;
+  border-color: var(--court-green);
+  color: var(--court-green);
+}
+
+.roster-chip-group { border-color: var(--court-green); }
+.roster-chip-group .badge-group {
+  background: var(--line-white);
+  border: 1px solid var(--border);
+  color: var(--ink-soft);
+}
+.roster-chip-group.on .badge-group {
+  background: rgba(255, 255, 255, 0.25);
+  border-color: transparent;
+  color: #fff;
+}
+
 .covering {
   margin-top: 16px;
   border-top: 1px solid var(--border);
@@ -203,6 +221,59 @@ table.ledger th {
 
 tr.row-guest { background: var(--guest-tint); }
 
+tr.group-head td {
+  background: var(--line-white);
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--ink);
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.group-head-count { color: var(--ink-soft); font-weight: 400; }
+
+.inline-select {
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: white;
+  font-size: 13px;
+  max-width: 160px;
+}
+
+.group-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.group-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+.group-chip-name { font-weight: 600; }
+
+.group-chip-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--line-white);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 
 .badge {
@@ -215,6 +286,39 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 
 .badge-regular { background: #e2ede6; color: var(--court-green); }
 .badge-guest { background: var(--shuttle-gold); color: #4a3612; }
+.badge-mixed { background: #e7e2d3; color: #5a4b2a; }
+.badge-group { background: rgba(255, 255, 255, 0.25); color: inherit; }
+
+.sub-note { font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
+
+/* Couple / group ledger row */
+.disclosure {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  text-align: left;
+}
+
+.disclosure-caret {
+  color: var(--ink-soft);
+  font-size: 11px;
+}
+
+tr.subrow td {
+  background: #fbfbf9;
+  font-size: 13px;
+  color: var(--ink-soft);
+  border-bottom: 1px solid var(--border);
+}
+
+tr.subrow td:first-child { padding-left: 22px; }
 
 .summary-row {
   display: flex;

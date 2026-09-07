@@ -11,6 +11,7 @@ Auto-calculates court fees, shuttle costs, and guest markup ("funds") for weekly
   - *Fixed amount per person* → `court_fee_per_slot`
   - *Total court fee ÷ all players* → `court_fee_total ÷ players`
 - **Additional costs** are free-form line items (name + price) — water, penalties, parking, snacks, anything. Each one is either **charged in full to one payer** or **split among everyone** by headcount. They're pass-through: collected and paid straight back out.
+- **Groups** (Players tab) bundle couples/families. When two or more members of the same group are in a session, the ledger collapses them into **one line with a combined total** (each person still calculated at their own Regular/Guest rate); expand the row to see or edit each person.
 - All per-person rates update live on the session screen as you add payment groups.
 - `base_cost = (court_unit_cost + shuttle_unit_cost) × headcount`
 - `extras = own direct line items + (split line items ÷ players) × headcount`
@@ -83,7 +84,7 @@ supabase/schema.sql       — run once in Supabase SQL Editor
 src/lib/calc.js           — the payment calculation engine (pure functions)
 src/lib/supabaseClient.js — Supabase connection
 src/pages/Login.jsx       — magic-link sign-in
-src/pages/Players.jsx     — manage roster + status
+src/pages/Players.jsx     — manage roster + status, organise into groups
 src/pages/SessionPage.jsx — today's session: tap players in from the roster, set rates + extra costs, live totals
 src/pages/History.jsx     — past sessions + all-time accumulated funds
 ```

@@ -2,6 +2,16 @@
 -- Run this in Supabase Studio > SQL Editor
 
 -- ─────────────────────────────────────────────
+-- PLAYER GROUPS: optional buckets for organising the roster
+-- (e.g. "Mon/Wed crew", "Sat crew"). A player is in one group or none.
+-- ─────────────────────────────────────────────
+create table player_groups (
+  id uuid primary key default gen_random_uuid(),
+  name text not null unique,
+  created_at timestamptz not null default now()
+);
+
+-- ─────────────────────────────────────────────
 -- PLAYERS: your permanent roster
 -- ─────────────────────────────────────────────
 create table players (
@@ -9,6 +19,7 @@ create table players (
   name text not null unique,
   status text not null check (status in ('regular', 'guest')) default 'regular',
   active boolean not null default true,
+  group_id uuid references player_groups(id) on delete set null,
   created_at timestamptz not null default now()
 );
 
@@ -141,12 +152,16 @@ left join direct_extras de on de.payment_group_id = pg.id;
 -- Tighten later if you add public read-only views.
 -- ─────────────────────────────────────────────
 alter table players enable row level security;
+alter table player_groups enable row level security;
 alter table sessions enable row level security;
 alter table payment_groups enable row level security;
 alter table extra_costs enable row level security;
 
 create policy "authenticated read players" on players for select using (auth.role() = 'authenticated');
 create policy "authenticated write players" on players for all using (auth.role() = 'authenticated');
+
+create policy "authenticated read player_groups" on player_groups for select using (auth.role() = 'authenticated');
+create policy "authenticated write player_groups" on player_groups for all using (auth.role() = 'authenticated');
 
 create policy "authenticated read sessions" on sessions for select using (auth.role() = 'authenticated');
 create policy "authenticated write sessions" on sessions for all using (auth.role() = 'authenticated');
@@ -196,6 +211,17 @@ create policy "authenticated write extras" on extra_costs for all using (auth.ro
 --
 -- alter table payment_groups drop column if exists water_cost;
 -- alter table payment_groups drop column if exists penalty;
+--
+-- -- Player groups (organise the roster; a player is in one group or none):
+-- create table if not exists player_groups (
+--   id uuid primary key default gen_random_uuid(),
+--   name text not null unique,
+--   created_at timestamptz not null default now()
+-- );
+-- alter table players add column if not exists group_id uuid references player_groups(id) on delete set null;
+-- alter table player_groups enable row level security;
+-- create policy "authenticated read player_groups" on player_groups for select using (auth.role() = 'authenticated');
+-- create policy "authenticated write player_groups" on player_groups for all using (auth.role() = 'authenticated');
 --
 -- drop view if exists session_summary;
 -- -- then re-run the `create view session_summary` statement above.

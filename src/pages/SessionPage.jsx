@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, Fragment } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import {
   calcGroup,
@@ -11,12 +11,40 @@ import {
 
 const todayStr = () => new Date().toISOString().slice(0, 10)
 
+function StatusBadge({ status }) {
+  return (
+    <span className={`badge ${status === 'regular' ? 'badge-regular' : 'badge-guest'}`}>
+      {status === 'regular' ? 'Regular' : 'Guest'}
+    </span>
+  )
+}
+
+// Module-level so the <input> keeps focus while typing (a component defined
+// inside the page would be a new type every render and remount the input).
+function HeadcountCell({ row, setGroups, commit }) {
+  return (
+    <input
+      className="hc-input"
+      type="number"
+      min="1"
+      inputMode="numeric"
+      value={row.headcount}
+      onChange={(e) =>
+        setGroups((prev) => prev.map((x) => (x.id === row.id ? { ...x, headcount: e.target.value } : x)))
+      }
+      onBlur={(e) => commit(row.id, 'headcount', Math.max(1, Math.floor(Number(e.target.value) || 1)))}
+    />
+  )
+}
+
 export default function SessionPage() {
   const [session, setSessionRow] = useState(null)
   const [groups, setGroups] = useState([])
   const [extras, setExtras] = useState([])
   const [players, setPlayers] = useState([])
+  const [playerGroups, setPlayerGroups] = useState([])
   const [loading, setLoading] = useState(true)
+  const [expanded, setExpanded] = useState(() => new Set())
 
   // "covering others" form state
   const [payerId, setPayerId] = useState('')
@@ -32,10 +60,13 @@ export default function SessionPage() {
     setLoading(true)
     const { data: playersData } = await supabase
       .from('players')
-      .select('*')
+      .select('id, name, status, group_id')
       .eq('active', true)
       .order('name')
     setPlayers(playersData || [])
+
+    const { data: pgroups } = await supabase.from('player_groups').select('*')
+    setPlayerGroups(pgroups || [])
 
     // find or create today's session
     const date = todayStr()
@@ -62,7 +93,7 @@ export default function SessionPage() {
 
     const { data: groupsData } = await supabase
       .from('payment_groups')
-      .select('*, players(name)')
+      .select('*, players(name, group_id)')
       .eq('session_id', existing.id)
       .order('created_at')
     setGroups(groupsData || [])
@@ -85,6 +116,8 @@ export default function SessionPage() {
     return m
   }, [groups])
 
+  const pgName = (id) => playerGroups.find((g) => g.id === id)?.name
+
   async function updateSessionField(field, value) {
     // optimistic: reflect the change immediately so derived rates recalc without a round-trip
     setSessionRow((prev) => (prev ? { ...prev, [field]: value } : prev))
@@ -97,36 +130,10 @@ export default function SessionPage() {
     if (!error) setSessionRow(data)
   }
 
-  // Toggle a roster player in/out of today's session (headcount 1).
-  async function togglePlayer(p) {
-    const existing = groupByPayer.get(p.id)
-    if (existing) {
-      const hc = Number(existing.headcount) || 1
-      if (hc > 1 || existing.members) {
-        const detail = existing.members ? ` (${existing.members})` : ''
-        if (!window.confirm(`${p.name} is covering a headcount of ${hc}${detail}. Remove from the session?`)) return
-      }
-      await supabase.from('payment_groups').delete().eq('id', existing.id)
-    } else {
-      const { error } = await supabase.from('payment_groups').insert({
-        session_id: session.id,
-        payer_id: p.id,
-        payer_status_snapshot: p.status,
-        headcount: 1,
-      })
-      if (error) {
-        alert(error.message)
-        return
-      }
-    }
-    loadEverything()
-  }
-
-  async function addAll() {
-    const missing = players.filter((p) => !groupByPayer.has(p.id))
-    if (missing.length === 0) return
+  async function addPayers(list) {
+    if (list.length === 0) return
     const { error } = await supabase.from('payment_groups').insert(
-      missing.map((p) => ({
+      list.map((p) => ({
         session_id: session.id,
         payer_id: p.id,
         payer_status_snapshot: p.status,
@@ -138,6 +145,45 @@ export default function SessionPage() {
       return
     }
     loadEverything()
+  }
+
+  async function removeGroupRows(ids) {
+    if (ids.length === 0) return
+    await supabase.from('payment_groups').delete().in('id', ids)
+    loadEverything()
+  }
+
+  // Toggle a single roster player in/out of today's session (headcount 1).
+  async function togglePlayer(p) {
+    const existing = groupByPayer.get(p.id)
+    if (existing) {
+      const hc = Number(existing.headcount) || 1
+      if (hc > 1 || existing.members) {
+        const detail = existing.members ? ` (${existing.members})` : ''
+        if (!window.confirm(`${p.name} is covering a headcount of ${hc}${detail}. Remove from the session?`)) return
+      }
+      await supabase.from('payment_groups').delete().eq('id', existing.id)
+      loadEverything()
+    } else {
+      addPayers([p])
+    }
+  }
+
+  // Toggle a whole group (couple/family) in or out at once.
+  async function toggleGroup(memberList) {
+    const present = memberList.filter((m) => groupByPayer.has(m.id))
+    if (present.length === memberList.length) {
+      const rows = present.map((m) => groupByPayer.get(m.id))
+      const risky = rows.some((g) => (Number(g.headcount) || 1) > 1 || g.members)
+      if (risky && !window.confirm('Remove this group from the session?')) return
+      removeGroupRows(rows.map((g) => g.id))
+    } else {
+      addPayers(memberList.filter((m) => !groupByPayer.has(m.id)))
+    }
+  }
+
+  async function addAll() {
+    await addPayers(players.filter((p) => !groupByPayer.has(p.id)))
   }
 
   async function addCoveringGroup(e) {
@@ -195,6 +241,14 @@ export default function SessionPage() {
     loadEverything()
   }
 
+  function toggleExpanded(key) {
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      next.has(key) ? next.delete(key) : next.add(key)
+      return next
+    })
+  }
+
   if (loading || !session) return <p>Loading today's session…</p>
 
   const headTotal = totalHeadcount(groups)
@@ -204,7 +258,53 @@ export default function SessionPage() {
   const totals = calcSessionTotals(session, groups, extras)
   const notYetIn = players.filter((p) => !groupByPayer.has(p.id))
 
+  // Roster picker sections: groups with 2+ active members render as one chip.
+  const rosterGroups = playerGroups
+    .map((pg) => ({ pg, members: players.filter((p) => p.group_id === pg.id) }))
+    .filter((s) => s.members.length >= 2)
+    .sort((a, b) => a.pg.name.localeCompare(b.pg.name))
+  const groupedPlayerIds = new Set(rosterGroups.flatMap((s) => s.members.map((m) => m.id)))
+  const soloPlayers = players.filter((p) => !groupedPlayerIds.has(p.id))
+
   const targetName = (gid) => groups.find((g) => g.id === gid)?.players?.name || 'Unknown'
+
+  // Ledger rows: bucket payment groups by the payer's player-group so couples bill as one line.
+  const byPlayerGroup = new Map()
+  groups.forEach((g) => {
+    const gid = g.players?.group_id
+    if (!gid) return
+    if (!byPlayerGroup.has(gid)) byPlayerGroup.set(gid, [])
+    byPlayerGroup.get(gid).push(g)
+  })
+  const done = new Set()
+  const ledgerRows = []
+  for (const g of groups) {
+    if (done.has(g.id)) continue
+    const gid = g.players?.group_id
+    const mates = gid ? byPlayerGroup.get(gid) : null
+    if (mates && mates.length >= 2) {
+      mates.forEach((m) => done.add(m.id))
+      const parts = mates.map((m) => ({ row: m, calc: calcGroup(session, m, headTotal, extras) }))
+      const sum = (fn) => parts.reduce((s, p) => s + fn(p), 0)
+      ledgerRows.push({
+        type: 'group',
+        key: gid,
+        title: pgName(gid) || parts.map((p) => p.row.players?.name).filter(Boolean).join(' & '),
+        names: parts.map((p) => p.row.players?.name).filter(Boolean),
+        parts,
+        headcount: sum((p) => Number(p.row.headcount) || 0),
+        allGuest: parts.every((p) => p.row.payer_status_snapshot === 'guest'),
+        anyGuest: parts.some((p) => p.row.payer_status_snapshot === 'guest'),
+        extrasTotal: sum((p) => p.calc.extrasTotal),
+        actualCost: sum((p) => p.calc.actualCost),
+        amountToPay: sum((p) => p.calc.amountToPay),
+        fundsGenerated: sum((p) => p.calc.fundsGenerated),
+      })
+    } else {
+      done.add(g.id)
+      ledgerRows.push({ type: 'solo', key: g.id, row: g, calc: calcGroup(session, g, headTotal, extras) })
+    }
+  }
 
   return (
     <div>
@@ -335,7 +435,27 @@ export default function SessionPage() {
           <div className="empty-state">No active players. Add some on the Players tab.</div>
         ) : (
           <div className="roster-picker">
-            {players.map((p) => {
+            {rosterGroups.map(({ pg, members: mem }) => {
+              const onCount = mem.filter((m) => groupByPayer.has(m.id)).length
+              const state = onCount === 0 ? 'off' : onCount === mem.length ? 'on' : 'partial'
+              return (
+                <button
+                  type="button"
+                  key={pg.id}
+                  className={`roster-chip roster-chip-group ${state === 'on' ? 'on' : ''} ${state === 'partial' ? 'partial' : ''}`}
+                  aria-pressed={state === 'on'}
+                  onClick={() => toggleGroup(mem)}
+                  title={mem.map((m) => m.name).join(', ')}
+                >
+                  <span className="roster-check" aria-hidden="true">
+                    {state === 'on' ? '✓' : state === 'partial' ? '–' : '+'}
+                  </span>
+                  <span className="roster-name">{pg.name}</span>
+                  <span className="badge badge-group">{onCount}/{mem.length}</span>
+                </button>
+              )
+            })}
+            {soloPlayers.map((p) => {
               const on = groupByPayer.has(p.id)
               return (
                 <button
@@ -465,6 +585,9 @@ export default function SessionPage() {
 
       <div className="panel">
         <h2>Today's ledger</h2>
+        <p className="hint" style={{ marginTop: 0 }}>
+          Couples &amp; groups show one combined total — expand a row to see or edit each person.
+        </p>
         {groups.length === 0 ? (
           <div className="empty-state">No one added yet. Pick players above.</div>
         ) : (
@@ -483,44 +606,90 @@ export default function SessionPage() {
                 </tr>
               </thead>
               <tbody>
-                {groups.map((g) => {
-                  const r = calcGroup(session, g, headTotal, extras)
+                {ledgerRows.map((lr) => {
+                  if (lr.type === 'solo') {
+                    const { row: g, calc: r } = lr
+                    return (
+                      <tr key={g.id} className={g.payer_status_snapshot === 'guest' ? 'row-guest' : ''}>
+                        <td>
+                          {g.players?.name}
+                          {g.members && <div className="sub-note">+ {g.members}</div>}
+                        </td>
+                        <td><StatusBadge status={g.payer_status_snapshot} /></td>
+                        <td className="num">
+                          <HeadcountCell row={g} setGroups={setGroups} commit={updateGroupField} />
+                        </td>
+                        <td className="num">{r.extrasTotal > 0 ? `₱${money(r.extrasTotal)}` : '—'}</td>
+                        <td className="num">₱{money(r.actualCost)}</td>
+                        <td className="num"><strong>₱{money(r.amountToPay)}</strong></td>
+                        <td className="num">{r.fundsGenerated > 0 ? `₱${money(r.fundsGenerated)}` : '—'}</td>
+                        <td>
+                          <button className="danger-link" onClick={() => removeGroup(g.id)}>Remove</button>
+                        </td>
+                      </tr>
+                    )
+                  }
+
+                  const isOpen = expanded.has(lr.key)
                   return (
-                    <tr key={g.id} className={g.payer_status_snapshot === 'guest' ? 'row-guest' : ''}>
-                      <td>
-                        {g.players?.name}
-                        {g.members && <div style={{ fontSize: 12, color: 'var(--ink-soft)' }}>+ {g.members}</div>}
-                      </td>
-                      <td>
-                        <span className={`badge ${g.payer_status_snapshot === 'regular' ? 'badge-regular' : 'badge-guest'}`}>
-                          {g.payer_status_snapshot === 'regular' ? 'Regular' : 'Guest'}
-                        </span>
-                      </td>
-                      <td className="num">
-                        <input
-                          className="hc-input"
-                          type="number"
-                          min="1"
-                          inputMode="numeric"
-                          value={g.headcount}
-                          onChange={(e) =>
-                            setGroups((prev) =>
-                              prev.map((x) => (x.id === g.id ? { ...x, headcount: e.target.value } : x))
-                            )
-                          }
-                          onBlur={(e) =>
-                            updateGroupField(g.id, 'headcount', Math.max(1, Math.floor(Number(e.target.value) || 1)))
-                          }
-                        />
-                      </td>
-                      <td className="num">{r.extrasTotal > 0 ? `₱${money(r.extrasTotal)}` : '—'}</td>
-                      <td className="num">₱{money(r.actualCost)}</td>
-                      <td className="num"><strong>₱{money(r.amountToPay)}</strong></td>
-                      <td className="num">{r.fundsGenerated > 0 ? `₱${money(r.fundsGenerated)}` : '—'}</td>
-                      <td>
-                        <button className="danger-link" onClick={() => removeGroup(g.id)}>Remove</button>
-                      </td>
-                    </tr>
+                    <Fragment key={lr.key}>
+                      <tr className={lr.allGuest ? 'row-guest' : ''}>
+                        <td>
+                          <button
+                            type="button"
+                            className="disclosure"
+                            aria-expanded={isOpen}
+                            onClick={() => toggleExpanded(lr.key)}
+                          >
+                            <span className="disclosure-caret">{isOpen ? '▾' : '▸'}</span>
+                            {lr.title}
+                          </button>
+                          <div className="sub-note">{lr.names.join(' + ')}</div>
+                        </td>
+                        <td>
+                          {lr.allGuest ? (
+                            <StatusBadge status="guest" />
+                          ) : lr.anyGuest ? (
+                            <span className="badge badge-mixed">Mixed</span>
+                          ) : (
+                            <StatusBadge status="regular" />
+                          )}
+                        </td>
+                        <td className="num">{lr.headcount}</td>
+                        <td className="num">{lr.extrasTotal > 0 ? `₱${money(lr.extrasTotal)}` : '—'}</td>
+                        <td className="num">₱{money(lr.actualCost)}</td>
+                        <td className="num"><strong>₱{money(lr.amountToPay)}</strong></td>
+                        <td className="num">{lr.fundsGenerated > 0 ? `₱${money(lr.fundsGenerated)}` : '—'}</td>
+                        <td>
+                          <button
+                            className="danger-link"
+                            onClick={() => removeGroupRows(lr.parts.map((p) => p.row.id))}
+                          >
+                            Remove
+                          </button>
+                        </td>
+                      </tr>
+                      {isOpen &&
+                        lr.parts.map(({ row: g, calc: r }) => (
+                          <tr key={g.id} className="subrow">
+                            <td>
+                              ↳ {g.players?.name}
+                              {g.members && <span className="muted"> · + {g.members}</span>}
+                            </td>
+                            <td><StatusBadge status={g.payer_status_snapshot} /></td>
+                            <td className="num">
+                              <HeadcountCell row={g} setGroups={setGroups} commit={updateGroupField} />
+                            </td>
+                            <td className="num">{r.extrasTotal > 0 ? `₱${money(r.extrasTotal)}` : '—'}</td>
+                            <td className="num">₱{money(r.actualCost)}</td>
+                            <td className="num">₱{money(r.amountToPay)}</td>
+                            <td className="num">{r.fundsGenerated > 0 ? `₱${money(r.fundsGenerated)}` : '—'}</td>
+                            <td>
+                              <button className="danger-link" onClick={() => removeGroup(g.id)}>Remove</button>
+                            </td>
+                          </tr>
+                        ))}
+                    </Fragment>
                   )
                 })}
               </tbody>
