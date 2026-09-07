@@ -91,6 +91,96 @@ nav.tabs a.active {
   margin-bottom: 14px;
 }
 
+.panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px 16px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.panel-head h2 { margin-bottom: 0; }
+
+.muted { color: var(--ink-soft); font-size: 13px; }
+
+.link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--court-green);
+  font-weight: 600;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+/* Roster multi-select */
+.roster-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.roster-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+  line-height: 1;
+}
+
+.roster-chip:hover { border-color: var(--court-green); }
+
+.roster-chip.on {
+  background: var(--court-green);
+  border-color: var(--court-green);
+  color: #fff;
+}
+
+.roster-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.08);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.roster-chip.on .roster-check { background: rgba(255, 255, 255, 0.25); }
+.roster-chip.on .badge { opacity: 0.9; }
+.roster-name { font-weight: 500; }
+
+.covering {
+  margin-top: 16px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.covering summary {
+  cursor: pointer;
+  color: var(--ink-soft);
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 12px;
+}
+
+.hc-input {
+  width: 62px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 table.ledger {
   width: 100%;
   border-collapse: collapse;
@@ -169,6 +259,11 @@ button.primary {
 }
 
 button.primary:hover { background: var(--court-green-light); }
+
+button.primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 
 button.ghost {
   background: transparent;
@@ -278,6 +373,38 @@ button.danger-link {
   flex-wrap: wrap;
 }
 
+/* Additional-cost line items */
+.extra-list {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.extra-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.extra-list li:last-child { border-bottom: none; }
+
+.extra-list .extra-name { font-weight: 600; }
+
+.extra-list .extra-target {
+  flex: 1;
+  color: var(--ink-soft);
+  font-size: 13px;
+}
+
+.extra-list .extra-amount {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
 /* ───────────────────────────── Mobile ───────────────────────────── */
 @media (max-width: 640px) {
   body { font-size: 16px; } /* keeps iOS from zooming on input focus */
@@ -322,6 +449,16 @@ button.danger-link {
   .field-row .field:empty { display: none; }
 
   .rate-chip { min-width: 0; flex-basis: 100%; }
+
+  .extra-list li {
+    flex-wrap: wrap;
+    column-gap: 10px;
+    row-gap: 2px;
+  }
+  .extra-list .extra-target { flex-basis: 100%; order: 3; }
+
+  .roster-chip { padding: 10px 14px; }
+  .roster-name { font-size: 15px; }
 
   .summary-row {
     flex-direction: column;

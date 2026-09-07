@@ -45,9 +45,23 @@ create table payment_groups (
   payer_id uuid not null references players(id) on delete restrict,
   payer_status_snapshot text not null check (payer_status_snapshot in ('regular', 'guest')),
   headcount int not null default 1 check (headcount > 0),
-  water_cost numeric(10,2) not null default 0,
-  penalty numeric(10,2) not null default 0,
   members text, -- free-text note of who's covered, e.g. "Carl, wife, 3 friends"
+  created_at timestamptz not null default now()
+);
+
+-- ─────────────────────────────────────────────
+-- EXTRA COSTS: free-form line items on a session (water, penalties,
+-- parking, snacks…). Each item is either charged in full to one payment
+-- group, or — when payment_group_id is null — split across everyone by
+-- headcount. Extras are pass-through: collected and paid straight back
+-- out, so they don't change "funds generated".
+-- ─────────────────────────────────────────────
+create table extra_costs (
+  id uuid primary key default gen_random_uuid(),
+  session_id uuid not null references sessions(id) on delete cascade,
+  label text not null,
+  amount numeric(10,2) not null default 0,
+  payment_group_id uuid references payment_groups(id) on delete cascade, -- null = split among everyone
   created_at timestamptz not null default now()
 );
 
@@ -71,6 +85,18 @@ rates as (
     (s.shuttle_count * s.shuttle_price_each) / nullif(ht.total_headcount, 0) as shuttle_unit_cost
   from sessions s
   left join head_totals ht on ht.session_id = s.id
+),
+split_extras as (
+  select session_id, sum(amount) as split_total
+  from extra_costs
+  where payment_group_id is null
+  group by session_id
+),
+direct_extras as (
+  select payment_group_id, sum(amount) as direct_total
+  from extra_costs
+  where payment_group_id is not null
+  group by payment_group_id
 )
 select
   pg.id as group_id,
@@ -81,24 +107,33 @@ select
   pg.headcount,
   coalesce(r.court_unit_cost, 0) * pg.headcount as court_total,
   coalesce(r.shuttle_unit_cost, 0) * pg.headcount as shuttle_total,
-  pg.water_cost,
-  pg.penalty,
-  (coalesce(r.court_unit_cost, 0) + coalesce(r.shuttle_unit_cost, 0)) * pg.headcount + pg.water_cost as actual_cost,
+  coalesce(de.direct_total, 0)
+    + coalesce(se.split_total, 0) / nullif(ht.total_headcount, 0) * pg.headcount as extras_total,
+  (coalesce(r.court_unit_cost, 0) + coalesce(r.shuttle_unit_cost, 0)) * pg.headcount
+    + coalesce(de.direct_total, 0)
+    + coalesce(se.split_total, 0) / nullif(ht.total_headcount, 0) * pg.headcount as actual_cost,
   case
     when pg.payer_status_snapshot = 'guest'
       then s.guest_fixed_rate * pg.headcount
-    else (coalesce(r.court_unit_cost, 0) + coalesce(r.shuttle_unit_cost, 0)) * pg.headcount + pg.water_cost
+           + coalesce(de.direct_total, 0)
+           + coalesce(se.split_total, 0) / nullif(ht.total_headcount, 0) * pg.headcount
+    else (coalesce(r.court_unit_cost, 0) + coalesce(r.shuttle_unit_cost, 0)) * pg.headcount
+           + coalesce(de.direct_total, 0)
+           + coalesce(se.split_total, 0) / nullif(ht.total_headcount, 0) * pg.headcount
   end as amount_to_pay,
   case
     when pg.payer_status_snapshot = 'guest'
       then (s.guest_fixed_rate * pg.headcount)
-           - ((coalesce(r.court_unit_cost, 0) + coalesce(r.shuttle_unit_cost, 0)) * pg.headcount + pg.water_cost)
+           - ((coalesce(r.court_unit_cost, 0) + coalesce(r.shuttle_unit_cost, 0)) * pg.headcount)
     else 0
   end as funds_generated
 from payment_groups pg
 join sessions s on s.id = pg.session_id
 join players p on p.id = pg.payer_id
-left join rates r on r.session_id = s.id;
+left join head_totals ht on ht.session_id = s.id
+left join rates r on r.session_id = s.id
+left join split_extras se on se.session_id = s.id
+left join direct_extras de on de.payment_group_id = pg.id;
 
 -- ─────────────────────────────────────────────
 -- Row Level Security
@@ -108,6 +143,7 @@ left join rates r on r.session_id = s.id;
 alter table players enable row level security;
 alter table sessions enable row level security;
 alter table payment_groups enable row level security;
+alter table extra_costs enable row level security;
 
 create policy "authenticated read players" on players for select using (auth.role() = 'authenticated');
 create policy "authenticated write players" on players for all using (auth.role() = 'authenticated');
@@ -118,10 +154,13 @@ create policy "authenticated write sessions" on sessions for all using (auth.rol
 create policy "authenticated read groups" on payment_groups for select using (auth.role() = 'authenticated');
 create policy "authenticated write groups" on payment_groups for all using (auth.role() = 'authenticated');
 
+create policy "authenticated read extras" on extra_costs for select using (auth.role() = 'authenticated');
+create policy "authenticated write extras" on extra_costs for all using (auth.role() = 'authenticated');
+
 -- ─────────────────────────────────────────────
--- MIGRATION — run this INSTEAD of the block above if you already
--- created the tables with the older schema (which had a stored
--- `shuttle_unit_cost` column and no court-fee mode).
+-- MIGRATION — run this if you already created the tables with an older
+-- schema (stored `shuttle_unit_cost`, no court-fee mode, per-group
+-- `water_cost` / `penalty` columns). Safe to run once on a live DB.
 -- ─────────────────────────────────────────────
 -- alter table sessions
 --   add column if not exists court_fee_mode text not null
@@ -136,6 +175,27 @@ create policy "authenticated write groups" on payment_groups for all using (auth
 -- -- session: shuttle_count = 1, shuttle_price_each = (old shuttle_unit_cost) *
 -- -- (that session's total headcount). Then:
 -- alter table sessions drop column if exists shuttle_unit_cost;
+--
+-- create table if not exists extra_costs (
+--   id uuid primary key default gen_random_uuid(),
+--   session_id uuid not null references sessions(id) on delete cascade,
+--   label text not null,
+--   amount numeric(10,2) not null default 0,
+--   payment_group_id uuid references payment_groups(id) on delete cascade,
+--   created_at timestamptz not null default now()
+-- );
+-- alter table extra_costs enable row level security;
+-- create policy "authenticated read extras" on extra_costs for select using (auth.role() = 'authenticated');
+-- create policy "authenticated write extras" on extra_costs for all using (auth.role() = 'authenticated');
+--
+-- -- Carry existing per-group water / penalty over as extra_costs charged to that group:
+-- insert into extra_costs (session_id, label, amount, payment_group_id)
+--   select session_id, 'Water', water_cost, id from payment_groups where water_cost > 0;
+-- insert into extra_costs (session_id, label, amount, payment_group_id)
+--   select session_id, 'Penalty', penalty, id from payment_groups where penalty > 0;
+--
+-- alter table payment_groups drop column if exists water_cost;
+-- alter table payment_groups drop column if exists penalty;
 --
 -- drop view if exists session_summary;
 -- -- then re-run the `create view session_summary` statement above.

@@ -10,12 +10,12 @@ export default function History() {
     async function load() {
       const { data: sessions } = await supabase
         .from('sessions')
-        .select('*, payment_groups(*)')
+        .select('*, payment_groups(*), extra_costs(*)')
         .order('session_date', { ascending: false })
 
       const withTotals = (sessions || []).map((s) => ({
         ...s,
-        totals: calcSessionTotals(s, s.payment_groups || []),
+        totals: calcSessionTotals(s, s.payment_groups || [], s.extra_costs || []),
       }))
       setRows(withTotals)
       setLoading(false)

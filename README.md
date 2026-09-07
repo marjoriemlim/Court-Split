@@ -4,16 +4,18 @@ Auto-calculates court fees, shuttle costs, and guest markup ("funds") for weekly
 
 ## How the math works
 
-- A **payment group** = one payer covering a headcount of people (themselves + anyone they bring), plus optional water/penalty.
+- A **payment group** = one payer covering a headcount of people (themselves + anyone they bring).
 - `players` = the sum of every payment group's headcount in that session.
 - **Shuttle cost per person** is auto-calculated: enter the number of **shuttles used** and the **price per shuttle**; the app computes `shuttle_count × shuttle_price_each ÷ players`.
 - **Court fee** has two modes, picked per session:
   - *Fixed amount per person* → `court_fee_per_slot`
   - *Total court fee ÷ all players* → `court_fee_total ÷ players`
-- Both per-person rates update live on the session screen as you add payment groups.
-- `actual_cost = (court_unit_cost + shuttle_unit_cost) × headcount + water_cost`
-- If the payer is a **Regular** → they pay `actual_cost`. No funds generated, even if they're covering guests.
-- If the payer is a **Guest** → they pay `guest_fixed_rate × headcount`. Funds = `(guest_fixed_rate × headcount) − actual_cost`.
+- **Additional costs** are free-form line items (name + price) — water, penalties, parking, snacks, anything. Each one is either **charged in full to one payer** or **split among everyone** by headcount. They're pass-through: collected and paid straight back out.
+- All per-person rates update live on the session screen as you add payment groups.
+- `base_cost = (court_unit_cost + shuttle_unit_cost) × headcount`
+- `extras = own direct line items + (split line items ÷ players) × headcount`
+- If the payer is a **Regular** → they pay `base_cost + extras`. No funds generated, even if they're covering guests.
+- If the payer is a **Guest** → they pay `guest_fixed_rate × headcount + extras`. Funds = `(guest_fixed_rate × headcount) − base_cost` (extras don't touch funds).
 
 Status lives on the **player** (Players tab) and is snapshotted onto each payment group when added, so changing someone's status later doesn't rewrite history.
 
@@ -82,6 +84,6 @@ src/lib/calc.js           — the payment calculation engine (pure functions)
 src/lib/supabaseClient.js — Supabase connection
 src/pages/Login.jsx       — magic-link sign-in
 src/pages/Players.jsx     — manage roster + status
-src/pages/SessionPage.jsx — today's session: add payment groups, live totals
+src/pages/SessionPage.jsx — today's session: tap players in from the roster, set rates + extra costs, live totals
 src/pages/History.jsx     — past sessions + all-time accumulated funds
 ```

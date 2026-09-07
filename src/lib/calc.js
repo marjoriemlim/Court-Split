@@ -38,51 +38,82 @@ export function resolveRates(session, headTotal) {
 }
 
 /**
- * @param {Object} session - see resolveRates
- * @param {Object} group - { payer_status_snapshot, headcount, water_cost, penalty }
- * @param {number} [headTotal] - sum of all headcounts in the session; defaults to this group's own headcount
+ * Additional costs are free-form line items ({ label, amount, payment_group_id }).
+ * - payment_group_id set   → charged in full to that one payment group
+ * - payment_group_id null  → split across everyone by headcount
+ *
+ * @param {Array} extras
+ * @param {number} headTotal - sum of all headcounts in the session
  */
-export function calcGroup(session, group, headTotal) {
-  const headcount = Number(group.headcount) || 1
-  const water = Number(group.water_cost) || 0
-  const penalty = Number(group.penalty) || 0
+export function extrasSummary(extras, headTotal) {
+  const list = extras || []
+  const split = list.filter((e) => !e.payment_group_id)
+  const direct = list.filter((e) => e.payment_group_id)
+  const splitTotal = split.reduce((s, e) => s + (Number(e.amount) || 0), 0)
+  const directTotal = direct.reduce((s, e) => s + (Number(e.amount) || 0), 0)
+  const players = Number(headTotal) > 0 ? Number(headTotal) : 0
+  const splitUnit = players ? splitTotal / players : 0
+  return { split, direct, splitTotal, directTotal, splitUnit }
+}
 
-  const { shuttleUnitCost, courtUnitCost } = resolveRates(
-    session,
-    headTotal == null ? headcount : headTotal
-  )
+/** Extra-cost amount owed by one payment group: its own direct items + its share of the split ones. */
+export function extrasForGroup(extras, group, headTotal) {
+  const headcount = Number(group.headcount) || 0
+  const { splitUnit } = extrasSummary(extras, headTotal)
+  const directTotal = (extras || [])
+    .filter((e) => e.payment_group_id === group.id)
+    .reduce((s, e) => s + (Number(e.amount) || 0), 0)
+  const splitShare = splitUnit * headcount
+  return { directTotal, splitShare, total: directTotal + splitShare }
+}
+
+/**
+ * @param {Object} session - see resolveRates
+ * @param {Object} group - { id, payer_status_snapshot, headcount }
+ * @param {number} [headTotal] - sum of all headcounts in the session; defaults to this group's own headcount
+ * @param {Array} [extras] - all additional-cost rows for the session
+ */
+export function calcGroup(session, group, headTotal, extras) {
+  const headcount = Number(group.headcount) || 1
+  const head = headTotal == null ? headcount : headTotal
+
+  const { shuttleUnitCost, courtUnitCost } = resolveRates(session, head)
+  const ex = extrasForGroup(extras, group, head)
 
   const courtTotal = courtUnitCost * headcount
   const shuttleTotal = shuttleUnitCost * headcount
-  const actualCost = courtTotal + shuttleTotal + water
+  const baseCost = courtTotal + shuttleTotal
+  const actualCost = baseCost + ex.total
 
   const isGuest = group.payer_status_snapshot === 'guest'
   const amountToPay = isGuest
-    ? session.guest_fixed_rate * headcount + penalty
-    : actualCost + penalty
+    ? session.guest_fixed_rate * headcount + ex.total
+    : actualCost
 
-  const fundsGenerated = isGuest
-    ? session.guest_fixed_rate * headcount - actualCost
-    : 0
+  // Extra costs are pass-through (collected and paid straight back out), so
+  // they don't affect the surplus a guest generates.
+  const fundsGenerated = isGuest ? session.guest_fixed_rate * headcount - baseCost : 0
 
   return {
     courtUnitCost,
     shuttleUnitCost,
     courtTotal,
     shuttleTotal,
-    water,
-    penalty,
+    extrasDirect: ex.directTotal,
+    extrasSplitShare: ex.splitShare,
+    extrasTotal: ex.total,
+    baseCost,
     actualCost,
     amountToPay,
     fundsGenerated,
   }
 }
 
-export function calcSessionTotals(session, groups) {
+export function calcSessionTotals(session, groups, extras) {
   const headTotal = totalHeadcount(groups)
   return (groups || []).reduce(
     (acc, g) => {
-      const r = calcGroup(session, g, headTotal)
+      const r = calcGroup(session, g, headTotal, extras)
       acc.totalCollected += r.amountToPay
       acc.totalFunds += r.fundsGenerated
       return acc
