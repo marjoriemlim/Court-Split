@@ -123,6 +123,7 @@ export default function SessionPage() {
   const [expanded, setExpanded] = useState(() => new Set())
   const [syncing, setSyncing] = useState(false)
   const [saveError, setSaveError] = useState('')
+  const [exporting, setExporting] = useState(false)
 
   // "covering others" form state
   const [payerId, setPayerId] = useState('')
@@ -673,14 +674,67 @@ export default function SessionPage() {
     }
   }
 
-  // Regulars first, guests last, mixed couples between them. Array.sort is
-  // stable, so within a band rows keep the order they were added in.
+  // Grouped regulars (couples) first, then ungrouped regulars, then guests.
+  // A couple that is entirely guests belongs with the guests, not the couples.
+  // Array.sort is stable, so within a band rows keep the order they were added.
   const statusRank = (lr) => {
-    if (lr.type === 'solo') return lr.row.payer_status_snapshot === 'guest' ? 2 : 0
-    if (lr.allGuest) return 2
-    return lr.anyGuest ? 1 : 0
+    if (lr.type === 'group') {
+      if (lr.allGuest) return 3
+      return lr.anyGuest ? 1 : 0 // all-regular couples, then mixed ones
+    }
+    return lr.row.payer_status_snapshot === 'guest' ? 3 : 2
   }
   ledgerRows.sort((a, b) => statusRank(a) - statusRank(b))
+
+  // Build the receipt from the same rows the ledger renders, so the image can
+  // never drift from what is on screen.
+  async function exportLedger() {
+    setExporting(true)
+    try {
+      if (document.fonts?.ready) await document.fonts.ready // canvas needs the webfonts loaded
+      const { drawLedgerCanvas, shareOrDownloadCanvas } = await import('../lib/ledgerImage')
+
+      const label = session.label?.trim()
+      const idx = daySessions.findIndex((s) => s.id === session.id)
+      const sessionName = label || (daySessions.length > 1 ? `Session ${idx + 1}` : '')
+
+      const canvas = drawLedgerCanvas({
+        dateLine: prettyDate(date) + (sessionName ? ` · ${sessionName}` : ''),
+        rateLine:
+          `${peso(rates.courtUnitCost)} court + ${peso(rates.shuttleUnitCost)} shuttle per person` +
+          ` · ${headTotal} player${headTotal === 1 ? '' : 's'}`,
+        rows: ledgerRows.map((lr) =>
+          lr.type === 'solo'
+            ? {
+                name: lr.row.players?.name || 'Unknown',
+                sub: lr.row.members ? `+ ${lr.row.members}` : '',
+                note: lr.calc.extrasTotal !== 0 ? `${peso(lr.calc.extrasTotal)} adj.` : '',
+                status: lr.row.payer_status_snapshot,
+                headcount: lr.row.headcount,
+                amount: lr.calc.amountToPay,
+              }
+            : {
+                name: lr.title,
+                sub: lr.names.join(' + '),
+                note: lr.extrasTotal !== 0 ? `${peso(lr.extrasTotal)} adj.` : '',
+                status: lr.allGuest ? 'guest' : lr.anyGuest ? 'mixed' : 'regular',
+                headcount: lr.headcount,
+                amount: lr.amountToPay,
+              }
+        ),
+        totalCollected: totals.totalCollected,
+        totalFunds: totals.totalFunds,
+        fmt: peso,
+      })
+
+      const suffix = sessionName ? `-${sessionName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}` : ''
+      await shareOrDownloadCanvas(canvas, `court-split-${date}${suffix}.png`, `Court Split — ${date}`)
+    } catch (err) {
+      setSaveError(err?.message || 'Could not export the ledger image')
+    } finally {
+      setExporting(false)
+    }
+  }
 
   return (
     <div>
@@ -957,7 +1011,17 @@ export default function SessionPage() {
       </div>
 
       <div className="panel">
-        <h2>Today's ledger</h2>
+        <div className="panel-head">
+          <h2>Ledger</h2>
+          <button
+            type="button"
+            className="ghost"
+            onClick={exportLedger}
+            disabled={exporting || groups.length === 0}
+          >
+            {exporting ? 'Preparing…' : 'Export as image'}
+          </button>
+        </div>
         <p className="hint" style={{ marginTop: 0 }}>
           Couples &amp; groups show one combined total — expand a row to see or edit each person.
         </p>

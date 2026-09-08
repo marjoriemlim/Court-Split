@@ -1,0 +1,230 @@
+// Draws the ledger as a shareable receipt image.
+//
+// Deliberately not a screenshot of the table: this renders only what a payer
+// needs to see (who owes what), leaving out the Remove buttons, headcount
+// inputs and horizontal scrollbar that a DOM capture would include.
+
+const C = {
+  paper: '#fbfaf6',
+  panel: '#ffffff',
+  ink: '#1a2420',
+  inkSoft: '#4d5a54',
+  border: '#d8ddd7',
+  green: '#1b5e42',
+  gold: '#d4a13d',
+  guestTint: '#fdf3e3',
+  credit: '#1b5e42',
+}
+
+const DISPLAY = "'Fraunces', Georgia, 'Times New Roman', serif"
+const BODY = "'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif"
+
+const W = 720
+const PAD = 32
+const SCALE = 2
+
+function ellipsize(ctx, text, maxWidth) {
+  if (ctx.measureText(text).width <= maxWidth) return text
+  let s = text
+  while (s.length > 1 && ctx.measureText(s + '…').width > maxWidth) s = s.slice(0, -1)
+  return s + '…'
+}
+
+function rowHeight(r) {
+  return r.sub || r.note ? 46 : 32
+}
+
+/**
+ * @param {Object} d
+ * @param {string} d.dateLine   - "Mon, Sep 8, 2026 · Evening"
+ * @param {string} d.rateLine   - per-person rate summary
+ * @param {Array}  d.rows       - { name, sub, note, status, headcount, amount }
+ * @param {number} d.totalCollected
+ * @param {number} d.totalFunds
+ * @param {(n:number)=>string} d.fmt - peso formatter
+ * @returns {HTMLCanvasElement}
+ */
+export function drawLedgerCanvas(d) {
+  const fmt = d.fmt
+  const rowsH = d.rows.reduce((h, r) => h + rowHeight(r), 0)
+  const showFunds = d.totalFunds > 0
+  const H =
+    PAD + 34 + 20 + 22 + 18 + 26 + rowsH + 18 + 58 + (showFunds ? 26 : 0) + 22 + PAD
+
+  const canvas = document.createElement('canvas')
+  canvas.width = W * SCALE
+  canvas.height = H * SCALE
+  const ctx = canvas.getContext('2d')
+  ctx.scale(SCALE, SCALE)
+  ctx.textBaseline = 'alphabetic'
+
+  // card
+  ctx.fillStyle = C.paper
+  ctx.fillRect(0, 0, W, H)
+  ctx.fillStyle = C.panel
+  ctx.fillRect(PAD / 2, PAD / 2, W - PAD, H - PAD)
+  ctx.strokeStyle = C.border
+  ctx.lineWidth = 1
+  ctx.strokeRect(PAD / 2 + 0.5, PAD / 2 + 0.5, W - PAD - 1, H - PAD - 1)
+
+  const L = PAD + 12
+  const R = W - PAD - 12
+  let y = PAD + 34
+
+  // header
+  ctx.fillStyle = C.ink
+  ctx.font = `600 26px ${DISPLAY}`
+  ctx.textAlign = 'left'
+  ctx.fillText('Court Split', L, y)
+
+  ctx.fillStyle = C.inkSoft
+  ctx.font = `400 13px ${BODY}`
+  ctx.textAlign = 'right'
+  ctx.fillText(d.dateLine, R, y)
+  y += 20
+
+  ctx.fillStyle = C.inkSoft
+  ctx.font = `400 12px ${BODY}`
+  ctx.textAlign = 'left'
+  ctx.fillText(ellipsize(ctx, d.rateLine, R - L), L, y)
+  y += 22
+
+  // rule
+  ctx.strokeStyle = C.green
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  ctx.moveTo(L, y)
+  ctx.lineTo(R, y)
+  ctx.stroke()
+  y += 18
+
+  // column headers
+  ctx.fillStyle = C.inkSoft
+  ctx.font = `600 10px ${BODY}`
+  ctx.textAlign = 'left'
+  ctx.fillText('PAYER', L, y)
+  ctx.textAlign = 'right'
+  ctx.fillText('PAX', R - 130, y)
+  ctx.fillText('AMOUNT', R, y)
+  y += 8
+
+  // rows
+  for (const r of d.rows) {
+    const h = rowHeight(r)
+    if (r.status === 'guest') {
+      ctx.fillStyle = C.guestTint
+      ctx.fillRect(L - 8, y, R - L + 16, h)
+    }
+    const baseline = y + 20
+
+    ctx.textAlign = 'left'
+    ctx.fillStyle = C.ink
+    ctx.font = `600 14px ${BODY}`
+    const nameMax = R - L - 190
+    const name = ellipsize(ctx, r.name, nameMax)
+    ctx.fillText(name, L, baseline)
+
+    // status tag after the name
+    const tagX = L + ctx.measureText(name).width + 8
+    if (r.status !== 'regular') {
+      const tag = r.status === 'guest' ? 'GUEST' : 'MIXED'
+      ctx.font = `700 9px ${BODY}`
+      ctx.fillStyle = r.status === 'guest' ? '#7a5a12' : C.inkSoft
+      ctx.fillText(tag, tagX, baseline - 1)
+    }
+
+    if (r.sub) {
+      ctx.font = `400 11px ${BODY}`
+      ctx.fillStyle = C.inkSoft
+      ctx.fillText(ellipsize(ctx, r.sub, nameMax), L, baseline + 15)
+    }
+    if (r.note) {
+      ctx.font = `400 11px ${BODY}`
+      ctx.fillStyle = r.note.startsWith('-') ? C.credit : C.inkSoft
+      ctx.textAlign = 'right'
+      ctx.fillText(r.note, R, baseline + 15)
+    }
+
+    ctx.textAlign = 'right'
+    ctx.fillStyle = C.inkSoft
+    ctx.font = `400 13px ${BODY}`
+    ctx.fillText(String(r.headcount), R - 130, baseline)
+
+    ctx.fillStyle = r.amount < 0 ? C.credit : C.ink
+    ctx.font = `600 15px ${BODY}`
+    ctx.fillText(fmt(r.amount), R, baseline)
+
+    y += h
+    ctx.strokeStyle = C.border
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.moveTo(L, y - 0.5)
+    ctx.lineTo(R, y - 0.5)
+    ctx.stroke()
+  }
+
+  y += 18
+
+  // totals
+  ctx.fillStyle = C.green
+  const boxH = showFunds ? 74 : 48
+  ctx.fillRect(L, y, R - L, boxH)
+
+  ctx.fillStyle = 'rgba(255,255,255,0.85)'
+  ctx.font = `400 11px ${BODY}`
+  ctx.textAlign = 'left'
+  ctx.fillText('TOTAL COLLECTED', L + 14, y + 20)
+  ctx.fillStyle = '#ffffff'
+  ctx.font = `600 20px ${DISPLAY}`
+  ctx.textAlign = 'right'
+  ctx.fillText(fmt(d.totalCollected), R - 14, y + 23)
+
+  if (showFunds) {
+    ctx.fillStyle = 'rgba(255,255,255,0.85)'
+    ctx.font = `400 11px ${BODY}`
+    ctx.textAlign = 'left'
+    ctx.fillText('FUNDS GENERATED', L + 14, y + 50)
+    ctx.fillStyle = C.gold
+    ctx.font = `600 16px ${DISPLAY}`
+    ctx.textAlign = 'right'
+    ctx.fillText(fmt(d.totalFunds), R - 14, y + 52)
+  }
+
+  y += boxH + 20
+
+  ctx.fillStyle = C.inkSoft
+  ctx.font = `400 10px ${BODY}`
+  ctx.textAlign = 'center'
+  ctx.fillText('Couples and groups are shown as one combined total.', W / 2, y)
+
+  return canvas
+}
+
+/** Share the canvas where supported, otherwise fall back to a download. */
+export async function shareOrDownloadCanvas(canvas, filename, title) {
+  const blob = await new Promise((res) => canvas.toBlob(res, 'image/png'))
+  if (!blob) throw new Error('Could not render the image')
+
+  if (typeof File !== 'undefined' && navigator.canShare) {
+    const file = new File([blob], filename, { type: 'image/png' })
+    if (navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title })
+        return 'shared'
+      } catch (err) {
+        if (err?.name === 'AbortError') return 'cancelled'
+        // fall through to download
+      }
+    }
+  }
+
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 10000)
+  return 'downloaded'
+}
