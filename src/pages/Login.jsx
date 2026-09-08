@@ -9,7 +9,15 @@ export default function Login() {
   async function handleLogin(e) {
     e.preventDefault()
     setError('')
-    const { error } = await supabase.auth.signInWithOtp({ email })
+    // Send people back to where this build actually lives. BASE_URL is the
+    // `base` from vite.config.js ('/court-split/'), so this resolves to
+    // https://<user>.github.io/court-split/ in production and
+    // http://localhost:5173/court-split/ in dev — no hardcoded host.
+    const emailRedirectTo = `${window.location.origin}${import.meta.env.BASE_URL}`
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo },
+    })
     if (error) setError(error.message)
     else setSent(true)
   }

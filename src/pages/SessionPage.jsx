@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, Fragment } from 'react'
+import { useEffect, useMemo, useRef, useState, Fragment } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import {
   calcGroup,
@@ -10,6 +10,9 @@ import {
 } from '../lib/calc'
 
 const todayStr = () => new Date().toISOString().slice(0, 10)
+
+const TEMP = 'tmp:'
+const isTemp = (id) => typeof id === 'string' && id.startsWith(TEMP)
 
 function StatusBadge({ status }) {
   return (
@@ -29,6 +32,37 @@ function PlayerChip({ name, status, on, onClick }) {
   )
 }
 
+// Holds its own text while focused so typing never fights the saved value:
+// clearing the box to retype no longer snaps to 0, and a late server echo
+// can't overwrite what you're in the middle of entering.
+function NumberField({ label, value, onCommit, step = '0.01', min }) {
+  const [text, setText] = useState(() => String(value ?? 0))
+  const focused = useRef(false)
+
+  useEffect(() => {
+    if (!focused.current) setText(String(value ?? 0))
+  }, [value])
+
+  return (
+    <div className="field">
+      <label>{label}</label>
+      <input
+        type="number"
+        step={step}
+        min={min}
+        inputMode="decimal"
+        value={text}
+        onFocus={() => { focused.current = true }}
+        onBlur={() => { focused.current = false; setText(String(value ?? 0)) }}
+        onChange={(e) => {
+          setText(e.target.value)
+          onCommit(e.target.value === '' ? 0 : Number(e.target.value))
+        }}
+      />
+    </div>
+  )
+}
+
 // Module-level so the <input> keeps focus while typing (a component defined
 // inside the page would be a new type every render and remount the input).
 function HeadcountCell({ row, setGroups, commit }) {
@@ -42,7 +76,7 @@ function HeadcountCell({ row, setGroups, commit }) {
       onChange={(e) =>
         setGroups((prev) => prev.map((x) => (x.id === row.id ? { ...x, headcount: e.target.value } : x)))
       }
-      onBlur={(e) => commit(row.id, 'headcount', Math.max(1, Math.floor(Number(e.target.value) || 1)))}
+      onBlur={(e) => commit(row, Math.max(1, Math.floor(Number(e.target.value) || 1)))}
     />
   )
 }
@@ -55,6 +89,8 @@ export default function SessionPage() {
   const [playerGroups, setPlayerGroups] = useState([])
   const [loading, setLoading] = useState(true)
   const [expanded, setExpanded] = useState(() => new Set())
+  const [syncing, setSyncing] = useState(false)
+  const [saveError, setSaveError] = useState('')
 
   // "covering others" form state
   const [payerId, setPayerId] = useState('')
@@ -65,6 +101,20 @@ export default function SessionPage() {
   const [costLabel, setCostLabel] = useState('')
   const [costAmount, setCostAmount] = useState('')
   const [costTarget, setCostTarget] = useState('') // '' = split among everyone, else payment_group id
+
+  // ── Deferred writes ──────────────────────────────────────────────
+  // Roster taps update local state instantly and queue the real insert/delete.
+  // A debounce batches a burst of taps into one round-trip, and nothing
+  // re-reads the session row, so the settings above are never clobbered.
+  const sessionIdRef = useRef(null)
+  const idByPayer = useRef(new Map())    // payer_id -> real payment_group id
+  const pendingAdds = useRef(new Map())  // payer_id -> optimistic row awaiting insert
+  const pendingDels = useRef(new Map())  // payer_id -> real row awaiting delete
+  const flushTimer = useRef(null)
+  const flushChain = useRef(Promise.resolve())
+  const sessionTimers = useRef({})
+
+  useEffect(() => { sessionIdRef.current = session?.id ?? null }, [session])
 
   async function loadEverything() {
     setLoading(true)
@@ -93,13 +143,14 @@ export default function SessionPage() {
         .select()
         .single()
       if (error) {
-        alert(error.message)
+        setSaveError(error.message)
         setLoading(false)
         return
       }
       existing = created
     }
     setSessionRow(existing)
+    sessionIdRef.current = existing.id
 
     const { data: groupsData } = await supabase
       .from('payment_groups')
@@ -107,6 +158,7 @@ export default function SessionPage() {
       .eq('session_id', existing.id)
       .order('created_at')
     setGroups(groupsData || [])
+    idByPayer.current = new Map((groupsData || []).map((g) => [g.payer_id, g.id]))
 
     const { data: extrasData } = await supabase
       .from('extra_costs')
@@ -120,122 +172,233 @@ export default function SessionPage() {
 
   useEffect(() => { loadEverything() }, [])
 
-  const groupByPayer = useMemo(() => {
-    const m = new Map()
-    groups.forEach((g) => m.set(g.payer_id, g))
-    return m
-  }, [groups])
-
-  const pgName = (id) => playerGroups.find((g) => g.id === id)?.name
-
-  async function updateSessionField(field, value) {
-    // optimistic: reflect the change immediately so derived rates recalc without a round-trip
-    setSessionRow((prev) => (prev ? { ...prev, [field]: value } : prev))
-    const { data, error } = await supabase
-      .from('sessions')
-      .update({ [field]: value })
-      .eq('id', session.id)
-      .select()
-      .single()
-    if (!error) setSessionRow(data)
-  }
-
-  async function addPayers(list) {
-    if (list.length === 0) return
-    const { error } = await supabase.from('payment_groups').insert(
-      list.map((p) => ({
-        session_id: session.id,
-        payer_id: p.id,
-        payer_status_snapshot: p.status,
-        headcount: 1,
-      }))
-    )
-    if (error) {
-      alert(error.message)
-      return
+  // Never leave queued roster changes unsaved.
+  useEffect(() => {
+    const onHide = () => { if (document.visibilityState === 'hidden') flushRoster() }
+    document.addEventListener('visibilitychange', onHide)
+    return () => {
+      document.removeEventListener('visibilitychange', onHide)
+      flushRoster()
     }
-    loadEverything()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  async function doFlush() {
+    const adds = Array.from(pendingAdds.current.values())
+    const dels = Array.from(pendingDels.current.values())
+    if (adds.length === 0 && dels.length === 0) return
+    pendingAdds.current = new Map()
+    pendingDels.current = new Map()
+
+    setSyncing(true)
+    try {
+      if (dels.length) {
+        const { error } = await supabase
+          .from('payment_groups')
+          .delete()
+          .in('id', dels.map((r) => r.id))
+        if (error) throw error
+        dels.forEach((r) => idByPayer.current.delete(r.payer_id))
+      }
+      if (adds.length) {
+        const { data, error } = await supabase
+          .from('payment_groups')
+          .insert(
+            adds.map((t) => ({
+              session_id: sessionIdRef.current,
+              payer_id: t.payer_id,
+              payer_status_snapshot: t.payer_status_snapshot,
+              headcount: Math.max(1, Math.floor(Number(t.headcount) || 1)),
+            }))
+          )
+          .select('*, players(name, group_id)')
+        if (error) throw error
+        const real = new Map((data || []).map((r) => [r.payer_id, r]))
+        real.forEach((r, payerId) => idByPayer.current.set(payerId, r.id))
+        setGroups((prev) =>
+          prev.map((g) => (isTemp(g.id) && real.has(g.payer_id) ? real.get(g.payer_id) : g))
+        )
+      }
+      setSaveError('')
+    } catch (err) {
+      setSaveError(err?.message || String(err))
+      // roll the failed additions back out of the view
+      setGroups((prev) => prev.filter((g) => !adds.some((a) => a.id === g.id)))
+    } finally {
+      setSyncing(false)
+    }
   }
 
-  async function removeGroupRows(ids) {
-    if (ids.length === 0) return
-    await supabase.from('payment_groups').delete().in('id', ids)
-    loadEverything()
+  function flushRoster() {
+    if (flushTimer.current) {
+      clearTimeout(flushTimer.current)
+      flushTimer.current = null
+    }
+    flushChain.current = flushChain.current.then(doFlush, doFlush)
+    return flushChain.current
   }
 
-  // Toggle a single roster player in/out of today's session (headcount 1).
-  async function togglePlayer(p) {
-    const existing = groupByPayer.get(p.id)
+  function scheduleFlush() {
+    if (flushTimer.current) clearTimeout(flushTimer.current)
+    flushTimer.current = setTimeout(() => {
+      flushTimer.current = null
+      flushRoster()
+    }, 600)
+  }
+
+  // ── Session settings ─────────────────────────────────────────────
+  // Local state is the truth while you type; the write is debounced and the
+  // response is deliberately NOT fed back into state.
+  function updateSessionField(field, value) {
+    setSessionRow((prev) => (prev ? { ...prev, [field]: value } : prev))
+    clearTimeout(sessionTimers.current[field])
+    sessionTimers.current[field] = setTimeout(async () => {
+      const { error } = await supabase
+        .from('sessions')
+        .update({ [field]: value })
+        .eq('id', sessionIdRef.current)
+      setSaveError(error ? `Couldn't save ${field.replace(/_/g, ' ')} — ${error.message}` : '')
+    }, 500)
+  }
+
+  // ── Roster ───────────────────────────────────────────────────────
+  function optimisticRow(p) {
+    return {
+      id: TEMP + p.id,
+      session_id: sessionIdRef.current,
+      payer_id: p.id,
+      payer_status_snapshot: p.status,
+      headcount: 1,
+      members: null,
+      players: { name: p.name, group_id: p.group_id },
+    }
+  }
+
+  function queueAdd(p) {
+    // re-adding someone whose delete hasn't gone out yet just cancels the delete
+    const revived = pendingDels.current.get(p.id)
+    if (revived) {
+      pendingDels.current.delete(p.id)
+      return revived
+    }
+    const row = optimisticRow(p)
+    pendingAdds.current.set(p.id, row)
+    return row
+  }
+
+  function queueRemove(row) {
+    if (isTemp(row.id)) pendingAdds.current.delete(row.payer_id)
+    else pendingDels.current.set(row.payer_id, row)
+  }
+
+  function togglePlayer(p) {
+    const existing = groups.find((g) => g.payer_id === p.id)
     if (existing) {
       const hc = Number(existing.headcount) || 1
       if (hc > 1 || existing.members) {
         const detail = existing.members ? ` (${existing.members})` : ''
         if (!window.confirm(`${p.name} is covering a headcount of ${hc}${detail}. Remove from the session?`)) return
       }
-      await supabase.from('payment_groups').delete().eq('id', existing.id)
-      loadEverything()
+      queueRemove(existing)
+      setGroups((prev) => prev.filter((g) => g.id !== existing.id))
     } else {
-      addPayers([p])
+      const row = queueAdd(p)
+      setGroups((prev) => [...prev, row])
     }
+    scheduleFlush()
   }
 
-  async function addAll() {
-    await addPayers(players.filter((p) => !groupByPayer.has(p.id)))
+  function addAll() {
+    const missing = players.filter((p) => !groups.some((g) => g.payer_id === p.id))
+    if (missing.length === 0) return
+    const rows = missing.map(queueAdd)
+    setGroups((prev) => [...prev, ...rows])
+    scheduleFlush()
+  }
+
+  function removeRows(rows) {
+    if (rows.length === 0) return
+    rows.forEach(queueRemove)
+    const ids = new Set(rows.map((r) => r.id))
+    setGroups((prev) => prev.filter((g) => !ids.has(g.id)))
+    scheduleFlush()
+  }
+
+  async function commitHeadcount(row, value) {
+    setGroups((prev) => prev.map((g) => (g.id === row.id ? { ...g, headcount: value } : g)))
+    if (isTemp(row.id)) {
+      // not inserted yet — let the queued insert carry the new value
+      const queued = pendingAdds.current.get(row.payer_id)
+      if (queued) queued.headcount = value
+      return
+    }
+    const { error } = await supabase
+      .from('payment_groups')
+      .update({ headcount: value })
+      .eq('id', row.id)
+    if (error) setSaveError(error.message)
   }
 
   async function addCoveringGroup(e) {
     e.preventDefault()
     if (!payerId) return
+    await flushRoster()
     const payer = players.find((p) => p.id === payerId)
-    const { error } = await supabase.from('payment_groups').insert({
-      session_id: session.id,
-      payer_id: payerId,
-      payer_status_snapshot: payer.status,
-      headcount: Number(headcount) || 1,
-      members: members.trim() || null,
-    })
+    const { data, error } = await supabase
+      .from('payment_groups')
+      .insert({
+        session_id: sessionIdRef.current,
+        payer_id: payerId,
+        payer_status_snapshot: payer.status,
+        headcount: Number(headcount) || 1,
+        members: members.trim() || null,
+      })
+      .select('*, players(name, group_id)')
+      .single()
     if (error) {
-      alert(error.message)
+      setSaveError(error.message)
       return
     }
+    idByPayer.current.set(data.payer_id, data.id)
+    setGroups((prev) => [...prev, data])
     setPayerId('')
     setHeadcount(2)
     setMembers('')
-    loadEverything()
   }
 
-  async function updateGroupField(id, field, value) {
-    setGroups((prev) => prev.map((g) => (g.id === id ? { ...g, [field]: value } : g)))
-    await supabase.from('payment_groups').update({ [field]: value }).eq('id', id)
-  }
-
-  async function removeGroup(id) {
-    await supabase.from('payment_groups').delete().eq('id', id)
-    loadEverything()
-  }
-
+  // ── Additional costs ─────────────────────────────────────────────
   async function addExtra(e) {
     e.preventDefault()
     if (!costLabel.trim() || costAmount === '' || Number.isNaN(Number(costAmount))) return
-    const { error } = await supabase.from('extra_costs').insert({
-      session_id: session.id,
-      label: costLabel.trim(),
-      amount: Number(costAmount) || 0,
-      payment_group_id: costTarget || null,
-    })
+    await flushRoster()
+    let target = costTarget || null
+    if (target && isTemp(target)) {
+      target = idByPayer.current.get(target.slice(TEMP.length)) || null
+    }
+    const { data, error } = await supabase
+      .from('extra_costs')
+      .insert({
+        session_id: sessionIdRef.current,
+        label: costLabel.trim(),
+        amount: Number(costAmount) || 0,
+        payment_group_id: target,
+      })
+      .select()
+      .single()
     if (error) {
-      alert(error.message)
+      setSaveError(error.message)
       return
     }
+    setExtras((prev) => [...prev, data])
     setCostLabel('')
     setCostAmount('')
     setCostTarget('')
-    loadEverything()
   }
 
   async function removeExtra(id) {
-    await supabase.from('extra_costs').delete().eq('id', id)
-    loadEverything()
+    setExtras((prev) => prev.filter((x) => x.id !== id))
+    const { error } = await supabase.from('extra_costs').delete().eq('id', id)
+    if (error) setSaveError(error.message)
   }
 
   function toggleExpanded(key) {
@@ -245,6 +408,14 @@ export default function SessionPage() {
       return next
     })
   }
+
+  const groupByPayer = useMemo(() => {
+    const m = new Map()
+    groups.forEach((g) => m.set(g.payer_id, g))
+    return m
+  }, [groups])
+
+  const pgName = (id) => playerGroups.find((g) => g.id === id)?.name
 
   if (loading || !session) return <p>Loading today's session…</p>
 
@@ -319,6 +490,13 @@ export default function SessionPage() {
 
   return (
     <div>
+      {saveError && (
+        <div className="save-error">
+          <span>{saveError}</span>
+          <button className="link-btn" onClick={() => setSaveError('')}>Dismiss</button>
+        </div>
+      )}
+
       <div className="panel">
         <h2>Session settings — {session.session_date}</h2>
 
@@ -334,63 +512,40 @@ export default function SessionPage() {
             </select>
           </div>
           {splitMode ? (
-            <div className="field">
-              <label>Total court fee (whole session)</label>
-              <input
-                type="number"
-                step="0.01"
-                inputMode="decimal"
-                value={session.court_fee_total ?? 0}
-                onChange={(e) => updateSessionField('court_fee_total', Number(e.target.value))}
-              />
-            </div>
-          ) : (
-            <div className="field">
-              <label>Court fee per person</label>
-              <input
-                type="number"
-                step="0.01"
-                inputMode="decimal"
-                value={session.court_fee_per_slot}
-                onChange={(e) => updateSessionField('court_fee_per_slot', Number(e.target.value))}
-              />
-            </div>
-          )}
-          <div className="field">
-            <label>Guest fixed rate (per person)</label>
-            <input
-              type="number"
-              step="0.01"
-              inputMode="decimal"
-              value={session.guest_fixed_rate}
-              onChange={(e) => updateSessionField('guest_fixed_rate', Number(e.target.value))}
+            <NumberField
+              label="Total court fee (whole session)"
+              value={session.court_fee_total ?? 0}
+              onCommit={(v) => updateSessionField('court_fee_total', v)}
             />
-          </div>
+          ) : (
+            <NumberField
+              label="Court fee per person"
+              value={session.court_fee_per_slot}
+              onCommit={(v) => updateSessionField('court_fee_per_slot', v)}
+            />
+          )}
+          <NumberField
+            label="Guest fixed rate (per person)"
+            value={session.guest_fixed_rate}
+            onCommit={(v) => updateSessionField('guest_fixed_rate', v)}
+          />
         </div>
 
         <div className="field-row">
-          <div className="field">
-            <label>Shuttles used this session</label>
-            <input
-              type="number"
-              step="1"
-              min="0"
-              inputMode="decimal"
-              value={session.shuttle_count ?? 0}
-              onChange={(e) => updateSessionField('shuttle_count', Number(e.target.value))}
-            />
-          </div>
-          <div className="field">
-            <label>Price per shuttle</label>
-            <input
-              type="number"
-              step="0.01"
-              min="0"
-              inputMode="decimal"
-              value={session.shuttle_price_each ?? 0}
-              onChange={(e) => updateSessionField('shuttle_price_each', Number(e.target.value))}
-            />
-          </div>
+          <NumberField
+            label="Shuttles used this session"
+            step="1"
+            min="0"
+            value={session.shuttle_count ?? 0}
+            onCommit={(v) => updateSessionField('shuttle_count', v)}
+          />
+          <NumberField
+            label="Price per shuttle"
+            step="0.01"
+            min="0"
+            value={session.shuttle_price_each ?? 0}
+            onCommit={(v) => updateSessionField('shuttle_price_each', v)}
+          />
           <div className="field" />
         </div>
 
@@ -433,6 +588,7 @@ export default function SessionPage() {
         <div className="panel-head">
           <h2>Who's playing today</h2>
           <span className="muted">
+            {syncing && <span className="sync-dot" title="Saving…" />}
             {groups.length} of {players.length} selected
             {notYetIn.length > 0 && (
               <>
@@ -615,14 +771,14 @@ export default function SessionPage() {
                         </td>
                         <td><StatusBadge status={g.payer_status_snapshot} /></td>
                         <td className="num">
-                          <HeadcountCell row={g} setGroups={setGroups} commit={updateGroupField} />
+                          <HeadcountCell row={g} setGroups={setGroups} commit={commitHeadcount} />
                         </td>
                         <td className="num">{r.extrasTotal > 0 ? `₱${money(r.extrasTotal)}` : '—'}</td>
                         <td className="num">₱{money(r.actualCost)}</td>
                         <td className="num"><strong>₱{money(r.amountToPay)}</strong></td>
                         <td className="num">{r.fundsGenerated > 0 ? `₱${money(r.fundsGenerated)}` : '—'}</td>
                         <td>
-                          <button className="danger-link" onClick={() => removeGroup(g.id)}>Remove</button>
+                          <button className="danger-link" onClick={() => removeRows([g])}>Remove</button>
                         </td>
                       </tr>
                     )
@@ -661,7 +817,7 @@ export default function SessionPage() {
                         <td>
                           <button
                             className="danger-link"
-                            onClick={() => removeGroupRows(lr.parts.map((p) => p.row.id))}
+                            onClick={() => removeRows(lr.parts.map((p) => p.row))}
                           >
                             Remove
                           </button>
@@ -676,14 +832,14 @@ export default function SessionPage() {
                             </td>
                             <td><StatusBadge status={g.payer_status_snapshot} /></td>
                             <td className="num">
-                              <HeadcountCell row={g} setGroups={setGroups} commit={updateGroupField} />
+                              <HeadcountCell row={g} setGroups={setGroups} commit={commitHeadcount} />
                             </td>
                             <td className="num">{r.extrasTotal > 0 ? `₱${money(r.extrasTotal)}` : '—'}</td>
                             <td className="num">₱{money(r.actualCost)}</td>
                             <td className="num">₱{money(r.amountToPay)}</td>
                             <td className="num">{r.fundsGenerated > 0 ? `₱${money(r.fundsGenerated)}` : '—'}</td>
                             <td>
-                              <button className="danger-link" onClick={() => removeGroup(g.id)}>Remove</button>
+                              <button className="danger-link" onClick={() => removeRows([g])}>Remove</button>
                             </td>
                           </tr>
                         ))}
