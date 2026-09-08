@@ -4,6 +4,8 @@ Auto-calculates court fees, shuttle costs, and guest markup ("funds") for weekly
 
 ## How the math works
 
+- A **session** is one playing block. The Session tab opens on today; the date bar steps back/forward a day or jumps to any date, so you can record a session you missed. Today is created automatically; any other date waits for an explicit **Start a session for this date** so browsing the calendar doesn't leave empty rows behind. Dates are shareable URLs (`#/session/2026-08-28`) and History links straight to them.
+- **A date can hold several sessions** — a morning game and an evening one. The tab strip under the date bar switches between them, **+ Add session** starts another, and each carries its own rates, roster, extras and totals. Name them with the optional **Label** field ("Morning", "Evening"); unlabelled ones show as "Session 1", "Session 2" in creation order.
 - A **payment group** = one payer covering a headcount of people (themselves + anyone they bring).
 - `players` = the sum of every payment group's headcount in that session.
 - **Shuttle cost per person** is auto-calculated: enter the number of **shuttles used** and the **price per shuttle**; the app computes `shuttle_count × shuttle_price_each ÷ players`.

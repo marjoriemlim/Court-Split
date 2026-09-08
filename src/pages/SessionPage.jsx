@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, Fragment } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
 import {
   calcGroup,
@@ -9,7 +10,29 @@ import {
   money,
 } from '../lib/calc'
 
-const todayStr = () => new Date().toISOString().slice(0, 10)
+const pad = (n) => String(n).padStart(2, '0')
+const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+
+// Local calendar date, not UTC — toISOString() would roll the date back for
+// anyone east of Greenwich during the early hours.
+const todayStr = () => ymd(new Date())
+
+const shiftDate = (dateStr, delta) => {
+  const [y, m, d] = dateStr.split('-').map(Number)
+  const dt = new Date(y, m - 1, d)
+  dt.setDate(dt.getDate() + delta)
+  return ymd(dt)
+}
+
+const prettyDate = (dateStr) => {
+  const [y, m, d] = dateStr.split('-').map(Number)
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  })
+}
 
 const TEMP = 'tmp:'
 const isTemp = (id) => typeof id === 'string' && id.startsWith(TEMP)
@@ -82,7 +105,15 @@ function HeadcountCell({ row, setGroups, commit }) {
 }
 
 export default function SessionPage() {
-  const [session, setSessionRow] = useState(null)
+  // "/" means today; "/session/<yyyy-mm-dd>" is any other day.
+  const { date: dateParam } = useParams()
+  const navigate = useNavigate()
+  const date = dateParam || todayStr()
+  const isToday = date === todayStr()
+  const goToDate = (d) => navigate(d === todayStr() ? '/' : `/session/${d}`)
+
+  const [daySessions, setDaySessions] = useState([]) // every session on this date
+  const [session, setSessionRow] = useState(null)    // the one being edited
   const [groups, setGroups] = useState([])
   const [extras, setExtras] = useState([])
   const [players, setPlayers] = useState([])
@@ -116,8 +147,80 @@ export default function SessionPage() {
 
   useEffect(() => { sessionIdRef.current = session?.id ?? null }, [session])
 
-  async function loadEverything() {
+  async function createSessionFor(dateStr) {
+    const { data, error } = await supabase
+      .from('sessions')
+      .insert({ session_date: dateStr })
+      .select()
+      .single()
+    if (error) {
+      setSaveError(error.message)
+      return null
+    }
+    return data
+  }
+
+  function clearSessionRows() {
+    setGroups([])
+    setExtras([])
+    idByPayer.current = new Map()
+  }
+
+  // Everything belonging to one session (not the whole day).
+  async function loadSessionRows(sessionRowId) {
+    const { data: groupsData } = await supabase
+      .from('payment_groups')
+      .select('*, players(name, group_id)')
+      .eq('session_id', sessionRowId)
+      .order('created_at')
+    setGroups(groupsData || [])
+    idByPayer.current = new Map((groupsData || []).map((g) => [g.payer_id, g.id]))
+
+    const { data: extrasData } = await supabase
+      .from('extra_costs')
+      .select('*')
+      .eq('session_id', sessionRowId)
+      .order('created_at')
+    setExtras(extrasData || [])
+  }
+
+  function activate(row) {
+    setSessionRow(row)
+    sessionIdRef.current = row.id
+  }
+
+  // Switch between two sessions on the same day (e.g. morning → evening).
+  async function selectSession(row) {
+    if (row.id === session?.id) return
+    await flushRoster()
     setLoading(true)
+    activate(row)
+    clearSessionRows()
+    await loadSessionRows(row.id)
+    setLoading(false)
+  }
+
+  // A second (or third) block on the same date.
+  async function addSession() {
+    await flushRoster()
+    const created = await createSessionFor(date)
+    if (!created) return
+    setDaySessions((prev) => [...prev, created])
+    activate(created)
+    clearSessionRows()
+  }
+
+  async function startSessionHere() {
+    const created = await createSessionFor(date)
+    if (!created) return
+    setDaySessions([created])
+    activate(created)
+    clearSessionRows()
+  }
+
+  async function loadEverything(dateStr) {
+    setLoading(true)
+    setSaveError('')
     const { data: playersData } = await supabase
       .from('players')
       .select('id, name, status, group_id')
@@ -128,49 +231,50 @@ export default function SessionPage() {
     const { data: pgroups } = await supabase.from('player_groups').select('*')
     setPlayerGroups(pgroups || [])
 
-    // find or create today's session
-    const date = todayStr()
-    let { data: existing } = await supabase
+    // A date can hold several sessions — oldest first, so "Session 1" is the
+    // one that was started first.
+    const { data: sessionsData } = await supabase
       .from('sessions')
       .select('*')
-      .eq('session_date', date)
-      .maybeSingle()
+      .eq('session_date', dateStr)
+      .order('created_at')
 
-    if (!existing) {
-      const { data: created, error } = await supabase
-        .from('sessions')
-        .insert({ session_date: date })
-        .select()
-        .single()
-      if (error) {
-        setSaveError(error.message)
-        setLoading(false)
-        return
-      }
-      existing = created
+    let list = sessionsData || []
+
+    // Today gets one created on sight so the common flow stays one-click. Any
+    // other date waits for an explicit "Start a session" so browsing back
+    // through the calendar doesn't litter History with empty rows.
+    if (list.length === 0 && dateStr === todayStr()) {
+      const created = await createSessionFor(dateStr)
+      if (created) list = [created]
     }
-    setSessionRow(existing)
-    sessionIdRef.current = existing.id
 
-    const { data: groupsData } = await supabase
-      .from('payment_groups')
-      .select('*, players(name, group_id)')
-      .eq('session_id', existing.id)
-      .order('created_at')
-    setGroups(groupsData || [])
-    idByPayer.current = new Map((groupsData || []).map((g) => [g.payer_id, g.id]))
+    setDaySessions(list)
 
-    const { data: extrasData } = await supabase
-      .from('extra_costs')
-      .select('*')
-      .eq('session_id', existing.id)
-      .order('created_at')
-    setExtras(extrasData || [])
+    if (list.length === 0) {
+      setSessionRow(null)
+      sessionIdRef.current = null
+      clearSessionRows()
+      setLoading(false)
+      return
+    }
 
+    activate(list[0])
+    await loadSessionRows(list[0].id)
     setLoading(false)
   }
 
-  useEffect(() => { loadEverything() }, [])
+  // Reload whenever the date changes, saving anything still queued for the day
+  // we're leaving before we swap sessions underneath it.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      await flushRoster()
+      if (!cancelled) await loadEverything(date)
+    })()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [date])
 
   // Never leave queued roster changes unsaved.
   useEffect(() => {
@@ -205,7 +309,9 @@ export default function SessionPage() {
           .from('payment_groups')
           .insert(
             adds.map((t) => ({
-              session_id: sessionIdRef.current,
+              // the session this row was queued against, not whichever date is
+              // on screen by the time the debounce fires
+              session_id: t.session_id,
               payer_id: t.payer_id,
               payer_status_snapshot: t.payer_status_snapshot,
               headcount: Math.max(1, Math.floor(Number(t.headcount) || 1)),
@@ -251,12 +357,17 @@ export default function SessionPage() {
   // response is deliberately NOT fed back into state.
   function updateSessionField(field, value) {
     setSessionRow((prev) => (prev ? { ...prev, [field]: value } : prev))
+    // capture the row now — switching dates or sessions before the debounce
+    // fires must not redirect this write onto a different session
+    const targetId = sessionIdRef.current
+    // keep the tab strip in step (it reads the label from this list)
+    setDaySessions((prev) => prev.map((s) => (s.id === targetId ? { ...s, [field]: value } : s)))
     clearTimeout(sessionTimers.current[field])
     sessionTimers.current[field] = setTimeout(async () => {
       const { error } = await supabase
         .from('sessions')
         .update({ [field]: value })
-        .eq('id', sessionIdRef.current)
+        .eq('id', targetId)
       setSaveError(error ? `Couldn't save ${field.replace(/_/g, ' ')} — ${error.message}` : '')
     }, 500)
   }
@@ -417,7 +528,76 @@ export default function SessionPage() {
 
   const pgName = (id) => playerGroups.find((g) => g.id === id)?.name
 
-  if (loading || !session) return <p>Loading today's session…</p>
+  const errorBanner = saveError && (
+    <div className="save-error">
+      <span>{saveError}</span>
+      <button className="link-btn" onClick={() => setSaveError('')}>Dismiss</button>
+    </div>
+  )
+
+  const dateBar = (
+    <div className="panel date-bar">
+      <div className="date-controls">
+        <button className="ghost" onClick={() => goToDate(shiftDate(date, -1))} aria-label="Previous day">‹</button>
+        <input
+          type="date"
+          className="date-input"
+          value={date}
+          onChange={(e) => e.target.value && goToDate(e.target.value)}
+        />
+        <button className="ghost" onClick={() => goToDate(shiftDate(date, 1))} aria-label="Next day">›</button>
+      </div>
+      <div className="date-label">
+        <strong>{prettyDate(date)}</strong>
+        {isToday ? (
+          <span className="badge badge-regular">Today</span>
+        ) : (
+          <button className="link-btn" onClick={() => goToDate(todayStr())}>Back to today</button>
+        )}
+      </div>
+    </div>
+  )
+
+  const sessionName = (s, i) => s.label?.trim() || `Session ${i + 1}`
+
+  // Only worth showing once the day actually has a session; a single unlabelled
+  // one still gets the strip so "+ Add session" is reachable.
+  const sessionTabs = daySessions.length > 0 && (
+    <div className="session-tabs">
+      {daySessions.map((s, i) => (
+        <button
+          key={s.id}
+          type="button"
+          className={`session-tab ${s.id === session?.id ? 'on' : ''}`}
+          onClick={() => selectSession(s)}
+        >
+          {sessionName(s, i)}
+        </button>
+      ))}
+      <button type="button" className="session-tab add" onClick={addSession}>
+        + Add session
+      </button>
+    </div>
+  )
+
+  if (loading) return <div>{errorBanner}{dateBar}{sessionTabs}<p>Loading session…</p></div>
+
+  if (!session) {
+    return (
+      <div>
+        {errorBanner}
+        {dateBar}
+        <div className="panel">
+          <div className="empty-state">
+            <p>No session recorded for {prettyDate(date)}.</p>
+            <button className="primary" onClick={startSessionHere}>
+              Start a session for this date
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   const headTotal = totalHeadcount(groups)
   const rates = resolveRates(session, headTotal)
@@ -490,15 +670,12 @@ export default function SessionPage() {
 
   return (
     <div>
-      {saveError && (
-        <div className="save-error">
-          <span>{saveError}</span>
-          <button className="link-btn" onClick={() => setSaveError('')}>Dismiss</button>
-        </div>
-      )}
+      {errorBanner}
+      {dateBar}
+      {sessionTabs}
 
       <div className="panel">
-        <h2>Session settings — {session.session_date}</h2>
+        <h2>Session settings</h2>
 
         <div className="field-row">
           <div className="field">
@@ -546,7 +723,14 @@ export default function SessionPage() {
             value={session.shuttle_price_each ?? 0}
             onCommit={(v) => updateSessionField('shuttle_price_each', v)}
           />
-          <div className="field" />
+          <div className="field">
+            <label>Label (optional)</label>
+            <input
+              value={session.label ?? ''}
+              onChange={(e) => updateSessionField('label', e.target.value)}
+              placeholder="e.g. Morning, Evening"
+            />
+          </div>
         </div>
 
         <div className="rate-readout">

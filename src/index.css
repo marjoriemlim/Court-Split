@@ -609,3 +609,84 @@ button.danger-link {
   0%, 100% { opacity: 0.35; }
   50%      { opacity: 1; }
 }
+
+/* Session date navigation */
+.date-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  padding: 12px 16px;
+}
+
+.date-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.date-controls button.ghost {
+  padding: 4px 12px;
+  font-size: 18px;
+  line-height: 1.2;
+  color: var(--ink);
+}
+
+.date-input {
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: white;
+  font-variant-numeric: tabular-nums;
+}
+
+.date-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+}
+
+table.ledger a { color: var(--court-green); font-weight: 600; }
+
+@media (max-width: 640px) {
+  .date-bar { justify-content: center; }
+  .date-controls { width: 100%; justify-content: space-between; }
+  .date-controls .date-input { flex: 1; margin: 0 8px; }
+  .date-controls button.ghost { width: auto; }
+  .date-label { width: 100%; justify-content: center; }
+}
+
+/* Multiple sessions on one date */
+.session-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: -8px 0 20px;
+}
+
+.session-tab {
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--ink-soft);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.session-tab:hover { border-color: var(--court-green); }
+
+.session-tab.on {
+  background: var(--court-green);
+  border-color: var(--court-green);
+  color: #fff;
+}
+
+.session-tab.add {
+  border-style: dashed;
+  color: var(--court-green);
+  font-weight: 600;
+}

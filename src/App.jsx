@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Routes, Route, NavLink, Navigate } from 'react-router-dom'
+import { Routes, Route, NavLink, Navigate, useLocation } from 'react-router-dom'
 import { supabase } from './lib/supabaseClient'
 import Login from './pages/Login'
 import Players from './pages/Players'
@@ -8,6 +8,9 @@ import History from './pages/History'
 
 export default function App() {
   const [session, setSession] = useState(undefined) // undefined = loading
+  const { pathname } = useLocation()
+  // "/" is today; "/session/<date>" is any other day — both belong to this tab
+  const onSessionTab = pathname === '/' || pathname.startsWith('/session/')
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session))
@@ -38,8 +41,8 @@ export default function App() {
       </header>
 
       <nav className="tabs">
-        <NavLink to="/" end className={({ isActive }) => (isActive ? 'active' : '')}>
-          Today's session
+        <NavLink to="/" end className={onSessionTab ? 'active' : ''}>
+          Session
         </NavLink>
         <NavLink to="/players" className={({ isActive }) => (isActive ? 'active' : '')}>
           Players
@@ -51,6 +54,7 @@ export default function App() {
 
       <Routes>
         <Route path="/" element={<SessionPage />} />
+        <Route path="/session/:date" element={<SessionPage />} />
         <Route path="/players" element={<Players />} />
         <Route path="/history" element={<History />} />
         <Route path="*" element={<Navigate to="/" replace />} />

@@ -24,7 +24,8 @@ create table players (
 );
 
 -- ─────────────────────────────────────────────
--- SESSIONS: one row per playing day (e.g. "August 28")
+-- SESSIONS: one row per playing block. A date can have several (e.g. a
+-- morning and an evening game) — distinguish them with `label`.
 --
 -- Shuttle cost per person is DERIVED, not stored: it's
 --   (shuttle_count * shuttle_price_each) / (sum of headcounts this session)
@@ -36,6 +37,7 @@ create table players (
 create table sessions (
   id uuid primary key default gen_random_uuid(),
   session_date date not null,
+  label text,                                               -- e.g. "Morning" / "Evening"; blank shows as "Session N"
   court_fee_mode text not null check (court_fee_mode in ('per_person', 'split')) default 'per_person',
   court_fee_per_slot numeric(10,2) not null default 175,   -- used when court_fee_mode = 'per_person'
   court_fee_total numeric(10,2) not null default 0,         -- used when court_fee_mode = 'split'
@@ -225,3 +227,8 @@ create policy "authenticated write extras" on extra_costs for all using (auth.ro
 --
 -- drop view if exists session_summary;
 -- -- then re-run the `create view session_summary` statement above.
+--
+-- -- Multiple sessions per day (morning + evening). If you already applied the
+-- -- earlier unique-on-date constraint, drop it — it forbids a second session:
+-- alter table sessions drop constraint if exists sessions_session_date_key;
+-- alter table sessions add column if not exists label text;
