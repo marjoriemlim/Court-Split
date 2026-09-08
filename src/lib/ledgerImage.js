@@ -36,9 +36,10 @@ function rowHeight(r) {
 
 /**
  * @param {Object} d
- * @param {string} d.dateLine   - "Mon, Sep 8, 2026 · Evening"
- * @param {string} d.rateLine   - per-person rate summary
- * @param {Array}  d.rows       - { name, sub, note, status, headcount, amount }
+ * @param {string} d.dateLine     - "Mon, Sep 8, 2026 · Evening"
+ * @param {string} d.rateLine     - per-person rate summary
+ * @param {Array}  d.rows         - { name, sub, note, status, headcount, amount }
+ * @param {Array}  d.adjustments  - { label, scope, amount } itemised costs/credits
  * @param {number} d.totalCollected
  * @param {number} d.totalFunds
  * @param {(n:number)=>string} d.fmt - peso formatter
@@ -46,10 +47,12 @@ function rowHeight(r) {
  */
 export function drawLedgerCanvas(d) {
   const fmt = d.fmt
+  const adj = d.adjustments || []
   const rowsH = d.rows.reduce((h, r) => h + rowHeight(r), 0)
+  const adjH = adj.length ? 26 + adj.length * 20 + 10 : 0
   const showFunds = d.totalFunds > 0
   const H =
-    PAD + 34 + 20 + 22 + 18 + 26 + rowsH + 18 + 58 + (showFunds ? 26 : 0) + 22 + PAD
+    PAD + 34 + 20 + 22 + 18 + 26 + rowsH + adjH + 18 + 58 + (showFunds ? 26 : 0) + 22 + PAD
 
   const canvas = document.createElement('canvas')
   canvas.width = W * SCALE
@@ -163,6 +166,36 @@ export function drawLedgerCanvas(d) {
     ctx.stroke()
   }
 
+  // itemised costs & credits, so a payer can see what the "adj." on their
+  // line was actually for
+  if (adj.length) {
+    y += 16
+    ctx.fillStyle = C.inkSoft
+    ctx.font = `600 10px ${BODY}`
+    ctx.textAlign = 'left'
+    ctx.fillText('COSTS & CREDITS', L, y)
+    y += 14
+
+    const scopeX = L + 250
+    for (const a of adj) {
+      ctx.textAlign = 'left'
+      ctx.font = `500 12px ${BODY}`
+      ctx.fillStyle = C.ink
+      ctx.fillText(ellipsize(ctx, a.label, 235), L, y + 10)
+
+      ctx.font = `400 11px ${BODY}`
+      ctx.fillStyle = C.inkSoft
+      ctx.fillText(ellipsize(ctx, a.scope, R - 110 - scopeX), scopeX, y + 10)
+
+      ctx.textAlign = 'right'
+      ctx.font = `600 12px ${BODY}`
+      ctx.fillStyle = a.amount < 0 ? C.credit : C.ink
+      ctx.fillText(fmt(a.amount), R, y + 10)
+      y += 20
+    }
+    y += 10
+  }
+
   y += 18
 
   // totals
@@ -200,25 +233,46 @@ export function drawLedgerCanvas(d) {
   return canvas
 }
 
-/** Share the canvas where supported, otherwise fall back to a download. */
-export async function shareOrDownloadCanvas(canvas, filename, title) {
-  const blob = await new Promise((res) => canvas.toBlob(res, 'image/png'))
-  if (!blob) throw new Error('Could not render the image')
+function toBlob(canvas) {
+  return new Promise((res, rej) =>
+    canvas.toBlob((b) => (b ? res(b) : rej(new Error('Could not render the image'))), 'image/png')
+  )
+}
 
-  if (typeof File !== 'undefined' && navigator.canShare) {
-    const file = new File([blob], filename, { type: 'image/png' })
-    if (navigator.canShare({ files: [file] })) {
-      try {
-        await navigator.share({ files: [file], title })
-        return 'shared'
-      } catch (err) {
-        if (err?.name === 'AbortError') return 'cancelled'
-        // fall through to download
-      }
+/**
+ * Whether this browser can hand a PNG to the OS share sheet (Messenger,
+ * WhatsApp, Mail…). True on Android/iOS and Chrome on Windows; false on most
+ * desktop Firefox/Safari, where Download is the only route.
+ */
+export function canShareImageFiles() {
+  try {
+    if (typeof navigator === 'undefined' || !navigator.canShare || typeof File === 'undefined') {
+      return false
     }
+    return navigator.canShare({ files: [new File([''], 'x.png', { type: 'image/png' })] })
+  } catch {
+    return false
   }
+}
 
-  const url = URL.createObjectURL(blob)
+/** Hand the image to the OS share sheet. Returns 'shared' or 'cancelled'. */
+export async function shareCanvas(canvas, filename, title) {
+  const file = new File([await toBlob(canvas)], filename, { type: 'image/png' })
+  if (!navigator.canShare?.({ files: [file] })) {
+    throw new Error('This browser cannot share files — use Download instead.')
+  }
+  try {
+    await navigator.share({ files: [file], title })
+    return 'shared'
+  } catch (err) {
+    if (err?.name === 'AbortError') return 'cancelled'
+    throw err
+  }
+}
+
+/** Save the image to the device. */
+export async function downloadCanvas(canvas, filename) {
+  const url = URL.createObjectURL(await toBlob(canvas))
   const a = document.createElement('a')
   a.href = url
   a.download = filename

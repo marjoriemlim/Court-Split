@@ -35,6 +35,18 @@ const prettyDate = (dateStr) => {
   })
 }
 
+const CAN_SHARE = (() => {
+  try {
+    return (
+      typeof navigator !== 'undefined' &&
+      typeof File !== 'undefined' &&
+      !!navigator.canShare?.({ files: [new File([''], 'x.png', { type: 'image/png' })] })
+    )
+  } catch {
+    return false
+  }
+})()
+
 const TEMP = 'tmp:'
 const isTemp = (id) => typeof id === 'string' && id.startsWith(TEMP)
 
@@ -123,7 +135,7 @@ export default function SessionPage() {
   const [expanded, setExpanded] = useState(() => new Set())
   const [syncing, setSyncing] = useState(false)
   const [saveError, setSaveError] = useState('')
-  const [exporting, setExporting] = useState(false)
+  const [exporting, setExporting] = useState('') // '' | 'share' | 'download'
 
   // "covering others" form state
   const [payerId, setPayerId] = useState('')
@@ -688,11 +700,13 @@ export default function SessionPage() {
 
   // Build the receipt from the same rows the ledger renders, so the image can
   // never drift from what is on screen.
-  async function exportLedger() {
-    setExporting(true)
+  // mode: 'share' hands the PNG to the OS share sheet (Messenger, WhatsApp,
+  // Mail…); 'download' saves it to the device.
+  async function exportLedger(mode) {
+    setExporting(mode)
     try {
       if (document.fonts?.ready) await document.fonts.ready // canvas needs the webfonts loaded
-      const { drawLedgerCanvas, shareOrDownloadCanvas } = await import('../lib/ledgerImage')
+      const { drawLedgerCanvas, shareCanvas, downloadCanvas } = await import('../lib/ledgerImage')
 
       const label = session.label?.trim()
       const idx = daySessions.findIndex((s) => s.id === session.id)
@@ -722,17 +736,24 @@ export default function SessionPage() {
                 amount: lr.amountToPay,
               }
         ),
+        adjustments: extras.map((x) => ({
+          label: x.label,
+          scope: x.payment_group_id ? targetName(x.payment_group_id) : 'split among everyone',
+          amount: Number(x.amount) || 0,
+        })),
         totalCollected: totals.totalCollected,
         totalFunds: totals.totalFunds,
         fmt: peso,
       })
 
       const suffix = sessionName ? `-${sessionName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}` : ''
-      await shareOrDownloadCanvas(canvas, `court-split-${date}${suffix}.png`, `Court Split — ${date}`)
+      const filename = `court-split-${date}${suffix}.png`
+      if (mode === 'share') await shareCanvas(canvas, filename, `Court Split — ${date}`)
+      else await downloadCanvas(canvas, filename)
     } catch (err) {
       setSaveError(err?.message || 'Could not export the ledger image')
     } finally {
-      setExporting(false)
+      setExporting('')
     }
   }
 
@@ -1013,14 +1034,27 @@ export default function SessionPage() {
       <div className="panel">
         <div className="panel-head">
           <h2>Ledger</h2>
-          <button
-            type="button"
-            className="ghost"
-            onClick={exportLedger}
-            disabled={exporting || groups.length === 0}
-          >
-            {exporting ? 'Preparing…' : 'Export as image'}
-          </button>
+          <div className="row-actions">
+            {CAN_SHARE && (
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => exportLedger('share')}
+                disabled={!!exporting || groups.length === 0}
+                title="Send the bill to Messenger, WhatsApp, Mail…"
+              >
+                {exporting === 'share' ? 'Preparing…' : 'Share'}
+              </button>
+            )}
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => exportLedger('download')}
+              disabled={!!exporting || groups.length === 0}
+            >
+              {exporting === 'download' ? 'Preparing…' : 'Download image'}
+            </button>
+          </div>
         </div>
         <p className="hint" style={{ marginTop: 0 }}>
           Couples &amp; groups show one combined total — expand a row to see or edit each person.
