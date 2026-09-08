@@ -12,7 +12,9 @@ Auto-calculates court fees, shuttle costs, and guest markup ("funds") for weekly
 - **Court fee** has two modes, picked per session:
   - *Fixed amount per person* → `court_fee_per_slot`
   - *Total court fee ÷ all players* → `court_fee_total ÷ players`
-- **Additional costs** are free-form line items (name + price) — water, penalties, parking, snacks, anything. Each one is either **charged in full to one payer** or **split among everyone** by headcount. They're pass-through: collected and paid straight back out.
+- **Costs & credits** are free-form line items (name + amount). A **charge** adds (water, penalties, parking); a **credit** subtracts (someone bought the shuttles for the group, or overpaid last time). Either one is **applied in full to one payer** or **split among everyone** by headcount. They're pass-through: collected and paid straight back out, so they never change "funds generated". A credit stored as a negative `amount`, so the arithmetic is identical.
+  - *Example:* 4 regulars, ₱175 court each, 4 shuttles at ₱140 (₱560). Carl bought the shuttles, so credit ₱560 to Carl. Everyone owes ₱175 + ₱140 = ₱315; Carl's becomes **−₱245** (you owe him). Total collected ₱700 = the ₱1,260 real cost minus the ₱560 Carl already fronted.
+- The ledger lists **regulars first, guests last** (mixed couples in between).
 - **Groups** (Players tab) bundle couples/families. When two or more members of the same group are in a session, the ledger collapses them into **one line with a combined total** (each person still calculated at their own Regular/Guest rate); expand the row to see or edit each person.
 - All per-person rates update live on the session screen as you add payment groups.
 - `base_cost = (court_unit_cost + shuttle_unit_cost) × headcount`
@@ -82,7 +84,8 @@ npm run dev
 ## Project structure
 
 ```
-supabase/schema.sql       — run once in Supabase SQL Editor
+supabase/schema.sql       — run once on a brand-new database
+supabase/migrate.sql      — run on an existing database to catch it up (idempotent)
 src/lib/calc.js           — the payment calculation engine (pure functions)
 src/lib/supabaseClient.js — Supabase connection
 src/pages/Login.jsx       — magic-link sign-in

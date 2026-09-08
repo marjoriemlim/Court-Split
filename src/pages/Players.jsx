@@ -13,11 +13,7 @@ export default function Players() {
   async function load() {
     setLoading(true)
     const [{ data: playersData }, { data: groupsData }] = await Promise.all([
-      supabase
-        .from('players')
-        .select('*')
-        .order('status', { ascending: true })
-        .order('name', { ascending: true }),
+      supabase.from('players').select('*').order('name', { ascending: true }),
       supabase.from('player_groups').select('*').order('name', { ascending: true }),
     ])
     setPlayers(playersData || [])
@@ -27,6 +23,12 @@ export default function Players() {
 
   useEffect(() => { load() }, [])
 
+  // Regulars first, guests last; alphabetical within each.
+  const byStatusThenName = (a, b) => {
+    const rank = (p) => (p.status === 'guest' ? 1 : 0)
+    return rank(a) - rank(b) || a.name.localeCompare(b.name)
+  }
+
   const sections = useMemo(() => {
     const byGroup = new Map(groups.map((g) => [g.id, []]))
     const none = []
@@ -34,8 +36,12 @@ export default function Players() {
       if (p.group_id && byGroup.has(p.group_id)) byGroup.get(p.group_id).push(p)
       else none.push(p)
     }
-    const out = groups.map((g) => ({ id: g.id, name: g.name, players: byGroup.get(g.id) || [] }))
-    out.push({ id: null, name: 'No group', players: none })
+    const out = groups.map((g) => ({
+      id: g.id,
+      name: g.name,
+      players: (byGroup.get(g.id) || []).sort(byStatusThenName),
+    }))
+    out.push({ id: null, name: 'No group', players: none.sort(byStatusThenName) })
     return out
   }, [players, groups])
 

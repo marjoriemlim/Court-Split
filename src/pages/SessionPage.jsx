@@ -8,6 +8,7 @@ import {
   extrasSummary,
   totalHeadcount,
   money,
+  peso,
 } from '../lib/calc'
 
 const pad = (n) => String(n).padStart(2, '0')
@@ -131,6 +132,7 @@ export default function SessionPage() {
   // new additional-cost form state
   const [costLabel, setCostLabel] = useState('')
   const [costAmount, setCostAmount] = useState('')
+  const [costKind, setCostKind] = useState('charge') // 'charge' adds, 'credit' subtracts
   const [costTarget, setCostTarget] = useState('') // '' = split among everyone, else payment_group id
 
   // ── Deferred writes ──────────────────────────────────────────────
@@ -491,7 +493,9 @@ export default function SessionPage() {
       .insert({
         session_id: sessionIdRef.current,
         label: costLabel.trim(),
-        amount: Number(costAmount) || 0,
+        // the toggle owns the sign, so a stray minus in the box can't flip a
+        // charge into a credit behind your back
+        amount: Math.abs(Number(costAmount) || 0) * (costKind === 'credit' ? -1 : 1),
         payment_group_id: target,
       })
       .select()
@@ -503,6 +507,7 @@ export default function SessionPage() {
     setExtras((prev) => [...prev, data])
     setCostLabel('')
     setCostAmount('')
+    setCostKind('charge')
     setCostTarget('')
   }
 
@@ -667,6 +672,15 @@ export default function SessionPage() {
       ledgerRows.push({ type: 'solo', key: g.id, row: g, calc: calcGroup(session, g, headTotal, extras) })
     }
   }
+
+  // Regulars first, guests last, mixed couples between them. Array.sort is
+  // stable, so within a band rows keep the order they were added in.
+  const statusRank = (lr) => {
+    if (lr.type === 'solo') return lr.row.payer_status_snapshot === 'guest' ? 2 : 0
+    if (lr.allGuest) return 2
+    return lr.anyGuest ? 1 : 0
+  }
+  ledgerRows.sort((a, b) => statusRank(a) - statusRank(b))
 
   return (
     <div>
@@ -855,48 +869,66 @@ export default function SessionPage() {
       </div>
 
       <div className="panel">
-        <h2>Additional costs</h2>
+        <h2>Costs &amp; credits</h2>
         <p className="hint" style={{ marginTop: 0 }}>
-          Water, penalties, parking, snacks — anything extra. Charge it to one payer, or split it across everyone by headcount.
+          <strong>Charges</strong> add — water, penalties, parking, snacks.{' '}
+          <strong>Credits</strong> subtract — someone who bought the shuttles for the group, or is
+          carrying an overpayment forward. Either can hit one payer or be split across everyone by headcount.
         </p>
 
         {extras.length > 0 && (
           <ul className="extra-list">
-            {extras.map((x) => (
-              <li key={x.id}>
-                <span className="extra-name">{x.label}</span>
-                <span className="extra-target">
-                  {x.payment_group_id ? `→ ${targetName(x.payment_group_id)}` : '→ split among everyone'}
-                </span>
-                <span className="extra-amount">₱{money(x.amount)}</span>
-                <button className="danger-link" onClick={() => removeExtra(x.id)}>Remove</button>
-              </li>
-            ))}
+            {extras.map((x) => {
+              const credit = Number(x.amount) < 0
+              return (
+                <li key={x.id} className={credit ? 'is-credit' : ''}>
+                  <span className="extra-name">{x.label}</span>
+                  <span className="extra-target">
+                    {credit ? 'credit ' : ''}
+                    {x.payment_group_id ? `→ ${targetName(x.payment_group_id)}` : '→ split among everyone'}
+                  </span>
+                  <span className="extra-amount">{peso(x.amount)}</span>
+                  <button className="danger-link" onClick={() => removeExtra(x.id)}>Remove</button>
+                </li>
+              )
+            })}
           </ul>
         )}
 
         <form onSubmit={addExtra}>
           <div className="field-row">
+            <div className="field">
+              <label>Type</label>
+              <select value={costKind} onChange={(e) => setCostKind(e.target.value)}>
+                <option value="charge">Charge (adds)</option>
+                <option value="credit">Credit (subtracts)</option>
+              </select>
+            </div>
             <div className="field" style={{ flex: 2 }}>
               <label>Name</label>
               <input
                 value={costLabel}
                 onChange={(e) => setCostLabel(e.target.value)}
-                placeholder="e.g. Water, Late penalty, Parking"
+                placeholder={
+                  costKind === 'credit' ? 'e.g. Bought shuttles, Overpaid last time' : 'e.g. Water, Late penalty, Parking'
+                }
               />
             </div>
             <div className="field">
-              <label>Price</label>
+              <label>Amount</label>
               <input
                 type="number"
                 step="0.01"
+                min="0"
                 inputMode="decimal"
                 value={costAmount}
                 onChange={(e) => setCostAmount(e.target.value)}
               />
             </div>
+          </div>
+          <div className="field-row">
             <div className="field" style={{ flex: 2 }}>
-              <label>Charge to</label>
+              <label>Applies to</label>
               <select value={costTarget} onChange={(e) => setCostTarget(e.target.value)}>
                 <option value="">Split among everyone</option>
                 {groups.map((g) => (
@@ -906,15 +938,18 @@ export default function SessionPage() {
                 ))}
               </select>
             </div>
+            <div className="field" />
           </div>
-          <button className="primary" type="submit">Add cost</button>
+          <button className="primary" type="submit">
+            {costKind === 'credit' ? 'Add credit' : 'Add charge'}
+          </button>
         </form>
 
-        {exSummary.splitTotal > 0 && (
+        {exSummary.splitTotal !== 0 && (
           <p className="hint">
-            Split costs total ₱{money(exSummary.splitTotal)} —{' '}
+            Split {exSummary.splitTotal < 0 ? 'credits' : 'costs'} total {peso(exSummary.splitTotal)} —{' '}
             {headTotal > 0
-              ? `₱${money(exSummary.splitUnit)} per person`
+              ? `${peso(exSummary.splitUnit)} per person`
               : 'per-person share shows once players are added'}
             .
           </p>
@@ -957,9 +992,9 @@ export default function SessionPage() {
                         <td className="num">
                           <HeadcountCell row={g} setGroups={setGroups} commit={commitHeadcount} />
                         </td>
-                        <td className="num">{r.extrasTotal > 0 ? `₱${money(r.extrasTotal)}` : '—'}</td>
-                        <td className="num">₱{money(r.actualCost)}</td>
-                        <td className="num"><strong>₱{money(r.amountToPay)}</strong></td>
+                        <td className="num">{r.extrasTotal !== 0 ? peso(r.extrasTotal) : '—'}</td>
+                        <td className="num">{peso(r.actualCost)}</td>
+                        <td className="num"><strong>{peso(r.amountToPay)}</strong></td>
                         <td className="num">{r.fundsGenerated > 0 ? `₱${money(r.fundsGenerated)}` : '—'}</td>
                         <td>
                           <button className="danger-link" onClick={() => removeRows([g])}>Remove</button>
@@ -994,9 +1029,9 @@ export default function SessionPage() {
                           )}
                         </td>
                         <td className="num">{lr.headcount}</td>
-                        <td className="num">{lr.extrasTotal > 0 ? `₱${money(lr.extrasTotal)}` : '—'}</td>
-                        <td className="num">₱{money(lr.actualCost)}</td>
-                        <td className="num"><strong>₱{money(lr.amountToPay)}</strong></td>
+                        <td className="num">{lr.extrasTotal !== 0 ? peso(lr.extrasTotal) : '—'}</td>
+                        <td className="num">{peso(lr.actualCost)}</td>
+                        <td className="num"><strong>{peso(lr.amountToPay)}</strong></td>
                         <td className="num">{lr.fundsGenerated > 0 ? `₱${money(lr.fundsGenerated)}` : '—'}</td>
                         <td>
                           <button
@@ -1018,9 +1053,9 @@ export default function SessionPage() {
                             <td className="num">
                               <HeadcountCell row={g} setGroups={setGroups} commit={commitHeadcount} />
                             </td>
-                            <td className="num">{r.extrasTotal > 0 ? `₱${money(r.extrasTotal)}` : '—'}</td>
-                            <td className="num">₱{money(r.actualCost)}</td>
-                            <td className="num">₱{money(r.amountToPay)}</td>
+                            <td className="num">{r.extrasTotal !== 0 ? peso(r.extrasTotal) : '—'}</td>
+                            <td className="num">{peso(r.actualCost)}</td>
+                            <td className="num">{peso(r.amountToPay)}</td>
                             <td className="num">{r.fundsGenerated > 0 ? `₱${money(r.fundsGenerated)}` : '—'}</td>
                             <td>
                               <button className="danger-link" onClick={() => removeRows([g])}>Remove</button>

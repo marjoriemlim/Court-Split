@@ -81,7 +81,7 @@ create table extra_costs (
 -- Helpful view: everything pre-calculated, mirrors your spreadsheet.
 -- Per-person court + shuttle rates are derived from session totals divided by
 -- the sum of headcounts in that session.
-create view session_summary as
+create view session_summary with (security_invoker = on) as
 with head_totals as (
   select session_id, sum(headcount) as total_headcount
   from payment_groups
@@ -175,60 +175,8 @@ create policy "authenticated read extras" on extra_costs for select using (auth.
 create policy "authenticated write extras" on extra_costs for all using (auth.role() = 'authenticated');
 
 -- ─────────────────────────────────────────────
--- MIGRATION — run this if you already created the tables with an older
--- schema (stored `shuttle_unit_cost`, no court-fee mode, per-group
--- `water_cost` / `penalty` columns). Safe to run once on a live DB.
+-- ALREADY HAVE A DATABASE?
+-- Do not re-run this file — it creates tables from scratch.
+-- Run supabase/migrate.sql instead: it adds every column and table
+-- introduced since, backfills old data, and is safe to run twice.
 -- ─────────────────────────────────────────────
--- alter table sessions
---   add column if not exists court_fee_mode text not null
---     check (court_fee_mode in ('per_person', 'split')) default 'per_person',
---   add column if not exists court_fee_total numeric(10,2) not null default 0,
---   add column if not exists shuttle_count numeric(10,2) not null default 0,
---   add column if not exists shuttle_price_each numeric(10,2) not null default 0;
---
--- -- Old sessions stored only a per-person shuttle figure. The new model needs a
--- -- count and a price, so past sessions will show ₱0 shuttle until you fill those
--- -- in. If you want to keep an old session's numbers roughly intact, set for that
--- -- session: shuttle_count = 1, shuttle_price_each = (old shuttle_unit_cost) *
--- -- (that session's total headcount). Then:
--- alter table sessions drop column if exists shuttle_unit_cost;
---
--- create table if not exists extra_costs (
---   id uuid primary key default gen_random_uuid(),
---   session_id uuid not null references sessions(id) on delete cascade,
---   label text not null,
---   amount numeric(10,2) not null default 0,
---   payment_group_id uuid references payment_groups(id) on delete cascade,
---   created_at timestamptz not null default now()
--- );
--- alter table extra_costs enable row level security;
--- create policy "authenticated read extras" on extra_costs for select using (auth.role() = 'authenticated');
--- create policy "authenticated write extras" on extra_costs for all using (auth.role() = 'authenticated');
---
--- -- Carry existing per-group water / penalty over as extra_costs charged to that group:
--- insert into extra_costs (session_id, label, amount, payment_group_id)
---   select session_id, 'Water', water_cost, id from payment_groups where water_cost > 0;
--- insert into extra_costs (session_id, label, amount, payment_group_id)
---   select session_id, 'Penalty', penalty, id from payment_groups where penalty > 0;
---
--- alter table payment_groups drop column if exists water_cost;
--- alter table payment_groups drop column if exists penalty;
---
--- -- Player groups (organise the roster; a player is in one group or none):
--- create table if not exists player_groups (
---   id uuid primary key default gen_random_uuid(),
---   name text not null unique,
---   created_at timestamptz not null default now()
--- );
--- alter table players add column if not exists group_id uuid references player_groups(id) on delete set null;
--- alter table player_groups enable row level security;
--- create policy "authenticated read player_groups" on player_groups for select using (auth.role() = 'authenticated');
--- create policy "authenticated write player_groups" on player_groups for all using (auth.role() = 'authenticated');
---
--- drop view if exists session_summary;
--- -- then re-run the `create view session_summary` statement above.
---
--- -- Multiple sessions per day (morning + evening). If you already applied the
--- -- earlier unique-on-date constraint, drop it — it forbids a second session:
--- alter table sessions drop constraint if exists sessions_session_date_key;
--- alter table sessions add column if not exists label text;

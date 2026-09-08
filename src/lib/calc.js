@@ -42,6 +42,10 @@ export function resolveRates(session, headTotal) {
  * - payment_group_id set   → charged in full to that one payment group
  * - payment_group_id null  → split across everyone by headcount
  *
+ * A negative `amount` is a credit: someone who bought the shuttles for the
+ * group, or is carrying an overpayment forward. The arithmetic is identical —
+ * it just subtracts instead of adds.
+ *
  * @param {Array} extras
  * @param {number} headTotal - sum of all headcounts in the session
  */
@@ -124,3 +128,9 @@ export function calcSessionTotals(session, groups, extras) {
 
 export const money = (n) =>
   Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+/** Peso amount that may legitimately be negative (credits, refunds owed). */
+export const peso = (n) => {
+  const v = Number(n) || 0
+  return v < 0 ? `-₱${money(Math.abs(v))}` : `₱${money(v)}`
+}

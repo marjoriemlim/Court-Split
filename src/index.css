@@ -690,3 +690,12 @@ table.ledger a { color: var(--court-green); font-weight: 600; }
   color: var(--court-green);
   font-weight: 600;
 }
+
+/* Credits (negative extra costs) read as money coming back */
+.extra-list li.is-credit .extra-amount { color: var(--court-green); }
+.extra-list li.is-credit .extra-name::before {
+  content: "\2212";
+  margin-right: 5px;
+  color: var(--court-green);
+  font-weight: 700;
+}
