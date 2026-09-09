@@ -78,6 +78,18 @@ create table extra_costs (
   created_at timestamptz not null default now()
 );
 
+-- ─────────────────────────────────────────────
+-- FUND SETTINGS: a single row of figures that aren't derived from sessions.
+-- `opening_balance` is money already in the kitty before the first session
+-- this app tracks, so "total accumulated funds" is truthful from day one.
+-- ─────────────────────────────────────────────
+create table fund_settings (
+  id boolean primary key default true check (id),  -- the check pins this to one row
+  opening_balance numeric(12,2) not null default 0,
+  opening_as_of date,                              -- balance is as of the END of this day
+  updated_at timestamptz not null default now()
+);
+
 -- Helpful view: everything pre-calculated, mirrors your spreadsheet.
 -- Per-person court + shuttle rates are derived from session totals divided by
 -- the sum of headcounts in that session.
@@ -158,6 +170,7 @@ alter table player_groups enable row level security;
 alter table sessions enable row level security;
 alter table payment_groups enable row level security;
 alter table extra_costs enable row level security;
+alter table fund_settings enable row level security;
 
 create policy "authenticated read players" on players for select using (auth.role() = 'authenticated');
 create policy "authenticated write players" on players for all using (auth.role() = 'authenticated');
@@ -173,6 +186,9 @@ create policy "authenticated write groups" on payment_groups for all using (auth
 
 create policy "authenticated read extras" on extra_costs for select using (auth.role() = 'authenticated');
 create policy "authenticated write extras" on extra_costs for all using (auth.role() = 'authenticated');
+
+create policy "authenticated read fund_settings" on fund_settings for select using (auth.role() = 'authenticated');
+create policy "authenticated write fund_settings" on fund_settings for all using (auth.role() = 'authenticated');
 
 -- ─────────────────────────────────────────────
 -- ALREADY HAVE A DATABASE?

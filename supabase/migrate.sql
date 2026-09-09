@@ -177,7 +177,32 @@ left join split_extras  se on se.session_id = s.id
 left join direct_extras de on de.payment_group_id = pg.id;
 
 -- ---------------------------------------------------------------
--- 6. Tell PostgREST to pick up the new columns immediately
+-- 6. Fund settings: one row of figures that aren't derived from sessions.
+--    `opening_balance` is money already in the kitty before the first
+--    session this app tracks. Edit the values below to match your own
+--    starting figure; re-running keeps whatever is already there.
+-- ---------------------------------------------------------------
+create table if not exists fund_settings (
+  id boolean primary key default true check (id),  -- the check pins this to one row
+  opening_balance numeric(12,2) not null default 0,
+  opening_as_of date,
+  updated_at timestamptz not null default now()
+);
+
+alter table fund_settings enable row level security;
+
+drop policy if exists "authenticated read fund_settings" on fund_settings;
+drop policy if exists "authenticated write fund_settings" on fund_settings;
+
+create policy "authenticated read fund_settings" on fund_settings for select using (auth.role() = 'authenticated');
+create policy "authenticated write fund_settings" on fund_settings for all using (auth.role() = 'authenticated');
+
+insert into fund_settings (id, opening_balance, opening_as_of)
+values (true, 1623.68, '2026-09-03')
+on conflict (id) do nothing;
+
+-- ---------------------------------------------------------------
+-- 7. Tell PostgREST to pick up the new columns immediately
 --    (this is what the "schema cache" error is about)
 -- ---------------------------------------------------------------
 notify pgrst, 'reload schema';

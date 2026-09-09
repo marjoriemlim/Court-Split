@@ -3,8 +3,18 @@ import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabaseClient'
 import { calcSessionTotals, money } from '../lib/calc'
 
+/**
+ * A session only belongs in History once something was actually recorded against
+ * it. Opening the app on a fresh date creates an empty session row so the common
+ * flow stays one-click — those placeholders must not show up as past sessions.
+ */
+function hasRecord(session) {
+  return (session.payment_groups || []).length > 0 || (session.extra_costs || []).length > 0
+}
+
 export default function History() {
   const [rows, setRows] = useState([])
+  const [opening, setOpening] = useState({ balance: 0, asOf: null })
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -15,17 +25,29 @@ export default function History() {
         .order('session_date', { ascending: false })
         .order('created_at', { ascending: true }) // morning before evening within a day
 
-      const withTotals = (sessions || []).map((s) => ({
+      const withTotals = (sessions || []).filter(hasRecord).map((s) => ({
         ...s,
         totals: calcSessionTotals(s, s.payment_groups || [], s.extra_costs || []),
       }))
       setRows(withTotals)
+
+      // Funds already in the kitty before the first session this app tracks.
+      const { data: settings } = await supabase
+        .from('fund_settings')
+        .select('opening_balance, opening_as_of')
+        .maybeSingle()
+      setOpening({
+        balance: Number(settings?.opening_balance) || 0,
+        asOf: settings?.opening_as_of || null,
+      })
+
       setLoading(false)
     }
     load()
   }, [])
 
-  const accumulated = rows.reduce((sum, r) => sum + r.totals.totalFunds, 0)
+  const generated = rows.reduce((sum, r) => sum + r.totals.totalFunds, 0)
+  const accumulated = opening.balance + generated
 
   if (loading) return <p>Loading history…</p>
 
@@ -42,7 +64,7 @@ export default function History() {
 
       <div className="panel">
         <h2>Past sessions</h2>
-        {rows.length === 0 ? (
+        {rows.length === 0 && opening.balance === 0 ? (
           <div className="empty-state">No sessions recorded yet.</div>
         ) : (
           <div className="table-wrap">
@@ -69,6 +91,17 @@ export default function History() {
                     <td className="num">₱{money(r.totals.totalFunds)}</td>
                   </tr>
                 ))}
+                {opening.balance !== 0 && (
+                  <tr>
+                    <td>
+                      Carried forward
+                      {opening.asOf && <div className="sub-note">as of {opening.asOf}</div>}
+                    </td>
+                    <td className="num">—</td>
+                    <td className="num">—</td>
+                    <td className="num">₱{money(opening.balance)}</td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
