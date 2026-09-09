@@ -137,6 +137,12 @@ export default function SessionPage() {
   const [saveError, setSaveError] = useState('')
   const [exporting, setExporting] = useState('') // '' | 'share' | 'download'
 
+  // Everything the all-time fund balance needs that isn't the session on screen:
+  // the balance carried in before the app, plus each other session's funds.
+  // The session being edited is deliberately excluded — its live total is added
+  // in below, so the running balance tracks edits without waiting for a save.
+  const [fundHistory, setFundHistory] = useState({ opening: 0, bySession: {} })
+
   // "covering others" form state
   const [payerId, setPayerId] = useState('')
   const [headcount, setHeadcount] = useState(2)
@@ -289,6 +295,29 @@ export default function SessionPage() {
     })()
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [date])
+
+  // All-time fund figures, refreshed whenever the day changes.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const { data: settings } = await supabase
+        .from('fund_settings')
+        .select('opening_balance')
+        .maybeSingle()
+
+      const { data: all } = await supabase
+        .from('sessions')
+        .select('id, court_fee_mode, court_fee_per_slot, court_fee_total, shuttle_count, shuttle_price_each, guest_fixed_rate, payment_groups(*), extra_costs(*)')
+
+      if (cancelled) return
+      const bySession = {}
+      for (const s of all || []) {
+        bySession[s.id] = calcSessionTotals(s, s.payment_groups || [], s.extra_costs || []).totalFunds
+      }
+      setFundHistory({ opening: Number(settings?.opening_balance) || 0, bySession })
+    })()
+    return () => { cancelled = true }
   }, [date])
 
   // Never leave queued roster changes unsaved.
@@ -624,6 +653,15 @@ export default function SessionPage() {
   const totals = calcSessionTotals(session, groups, extras)
   const notYetIn = players.filter((p) => !groupByPayer.has(p.id))
 
+  // Every guest surplus ever banked: the carried-in balance, every other
+  // session, and this one live as it's edited.
+  const accumulatedFunds =
+    fundHistory.opening +
+    Object.entries(fundHistory.bySession)
+      .filter(([id]) => id !== session.id)
+      .reduce((sum, [, funds]) => sum + funds, 0) +
+    totals.totalFunds
+
   // Roster picker: one flat wrap of per-player chips. Members of the same group
   // (2+ playing) sit adjacent inside a tinted pair so they read as one unit,
   // but each person is still toggled individually.
@@ -743,6 +781,7 @@ export default function SessionPage() {
         })),
         totalCollected: totals.totalCollected,
         totalFunds: totals.totalFunds,
+        totalAccumulated: accumulatedFunds,
         fmt: peso,
       })
 
@@ -1176,6 +1215,10 @@ export default function SessionPage() {
           <div className="summary-card gold">
             <div className="label">Funds generated today</div>
             <div className="value">₱{money(totals.totalFunds)}</div>
+          </div>
+          <div className="summary-card gold">
+            <div className="label">Total accumulated funds (all time)</div>
+            <div className="value">₱{money(accumulatedFunds)}</div>
           </div>
         </div>
       </div>

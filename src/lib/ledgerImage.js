@@ -42,6 +42,7 @@ function rowHeight(r) {
  * @param {Array}  d.adjustments  - { label, scope, amount } itemised costs/credits
  * @param {number} d.totalCollected
  * @param {number} d.totalFunds
+ * @param {number} [d.totalAccumulated] - all-time guest surplus, this session included
  * @param {(n:number)=>string} d.fmt - peso formatter
  * @returns {HTMLCanvasElement}
  */
@@ -51,8 +52,9 @@ export function drawLedgerCanvas(d) {
   const rowsH = d.rows.reduce((h, r) => h + rowHeight(r), 0)
   const adjH = adj.length ? 26 + adj.length * 20 + 10 : 0
   const showFunds = d.totalFunds > 0
-  const H =
-    PAD + 34 + 20 + 22 + 18 + 26 + rowsH + adjH + 18 + 58 + (showFunds ? 26 : 0) + 22 + PAD
+  const showAccum = Number(d.totalAccumulated) > 0
+  const extraRows = (showFunds ? 1 : 0) + (showAccum ? 1 : 0)
+  const H = PAD + 34 + 20 + 22 + 18 + 26 + rowsH + adjH + 18 + 58 + extraRows * 26 + 22 + PAD
 
   const canvas = document.createElement('canvas')
   canvas.width = W * SCALE
@@ -200,28 +202,28 @@ export function drawLedgerCanvas(d) {
 
   // totals
   ctx.fillStyle = C.green
-  const boxH = showFunds ? 74 : 48
+  const boxH = 48 + extraRows * 26
   ctx.fillRect(L, y, R - L, boxH)
 
-  ctx.fillStyle = 'rgba(255,255,255,0.85)'
-  ctx.font = `400 11px ${BODY}`
-  ctx.textAlign = 'left'
-  ctx.fillText('TOTAL COLLECTED', L + 14, y + 20)
-  ctx.fillStyle = '#ffffff'
-  ctx.font = `600 20px ${DISPLAY}`
-  ctx.textAlign = 'right'
-  ctx.fillText(fmt(d.totalCollected), R - 14, y + 23)
+  // One line per figure, stacked inside the green box.
+  const lines = [{ label: 'TOTAL COLLECTED', amount: d.totalCollected, lead: true }]
+  if (showFunds) lines.push({ label: 'FUNDS GENERATED', amount: d.totalFunds })
+  if (showAccum) {
+    lines.push({ label: 'TOTAL ACCUMULATED FUNDS', amount: d.totalAccumulated })
+  }
 
-  if (showFunds) {
+  lines.forEach((line, i) => {
+    const top = y + i * 26
     ctx.fillStyle = 'rgba(255,255,255,0.85)'
     ctx.font = `400 11px ${BODY}`
     ctx.textAlign = 'left'
-    ctx.fillText('FUNDS GENERATED', L + 14, y + 50)
-    ctx.fillStyle = C.gold
-    ctx.font = `600 16px ${DISPLAY}`
+    ctx.fillText(line.label, L + 14, top + 20)
+
+    ctx.fillStyle = line.lead ? '#ffffff' : C.gold
+    ctx.font = `600 ${line.lead ? 20 : 16}px ${DISPLAY}`
     ctx.textAlign = 'right'
-    ctx.fillText(fmt(d.totalFunds), R - 14, y + 52)
-  }
+    ctx.fillText(fmt(line.amount), R - 14, top + 23)
+  })
 
   y += boxH + 20
 
